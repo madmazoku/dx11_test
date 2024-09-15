@@ -1,15 +1,21 @@
 ﻿#pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "D3DCompiler.lib")
+#pragma comment(lib, "dxgi.lib")
 
 #include <Windows.h>
+
 #include <d3d11.h>
 #include <d3dcompiler.h>
+#include <dxgi.h>
+
 #include <vector>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <format>
-#include <exception>
+#include <stdexcept>
+#include <string>
+#include <array>
 
 struct Point
 {
@@ -19,27 +25,101 @@ struct Point
 
 const size_t POINTS_COUNT = 10;
 
-ID3D11Device* device = nullptr;                // Устройство Direct3D
-ID3D11DeviceContext* context = nullptr;        // Контекст устройства для выполнения команд
-ID3D11ComputeShader* computeShader = nullptr;  // Компьютный шейдер
+ID3D11Device* device = nullptr;                // Direct3D device
+ID3D11DeviceContext* context = nullptr;        // Device context for executing commands
+ID3D11ComputeShader* computeShader = nullptr;  // Compute shader
 
-ID3D11Buffer* pointsBufferA = nullptr;        // Буфер A с данными точек
-ID3D11Buffer* pointsBufferB = nullptr;        // Буфер B с данными точек
-ID3D11ShaderResourceView* pointsSRVA = nullptr; // Resource View A для чтения буфера
-ID3D11ShaderResourceView* pointsSRVB = nullptr; // Resource View B для чтения буфера
-ID3D11UnorderedAccessView* pointsUAVA = nullptr; // Unordered Access View A для записи в буфер
-ID3D11UnorderedAccessView* pointsUAVB = nullptr; // Unordered Access View B для записи в буфер
+ID3D11Buffer* pointsBufferA = nullptr;        // Buffer A with point data
+ID3D11Buffer* pointsBufferB = nullptr;        // Buffer B with point data
+ID3D11ShaderResourceView* pointsSRVA = nullptr; // Resource View A for reading the buffer
+ID3D11ShaderResourceView* pointsSRVB = nullptr; // Resource View B for reading the buffer
+ID3D11UnorderedAccessView* pointsUAVA = nullptr; // Unordered Access View A for writing to the buffer
+ID3D11UnorderedAccessView* pointsUAVB = nullptr; // Unordered Access View B for writing to the buffer
 
-inline UINT safeSizeTToUINT(size_t sz) {
+std::string HumanReadableSize(uint64_t size)
+{
+	constexpr std::array<std::pair<const char*, uint64_t>, 5> units = { {
+		{"B", 1},
+		{"KB", 1024},
+		{"MB", 1024 * 1024},
+		{"GB", 1024 * 1024 * 1024},
+		{"TB", 1024ull * 1024 * 1024 * 1024}
+	} };
+
+	for (auto it = units.rbegin(); it != units.rend(); ++it)
+	{
+		if (size >= it->second)
+		{
+			std::string result = std::format("{:.2f}{}", static_cast<double>(size) / it->second, it->first);
+			return result;
+		}
+	}
+
+	return std::format("{:.2f}B", static_cast<double>(size)); // Fallback for sizes less than 1B
+}
+
+std::string MakeFailureMessage(HRESULT hr)
+{
+	LPSTR messageBuffer = nullptr;
+	size_t size = FormatMessageA(
+		FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+		nullptr,
+		hr,
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+		(LPSTR)&messageBuffer,
+		0,
+		nullptr
+	);
+
+	std::string message(messageBuffer, size);
+	LocalFree(messageBuffer);
+
+	return message;
+}
+
+void ThrowIfFailure(HRESULT hr, const std::string& message)
+{
+	if (!FAILED(hr)) return;
+
+	std::string failure_message = MakeFailureMessage(hr);
+
+	// Remove trailing space-like characters
+	failure_message.erase(failure_message.find_last_not_of(" \t\n\r\f\v") + 1);
+
+	// Make full error message
+	std::string fullErrorMessage = std::format(
+		"{} {} HRESULT: 0x{:08X}L",
+		message,
+		failure_message,
+		static_cast<unsigned long>(hr)
+	);
+
+	throw std::runtime_error(fullErrorMessage);
+}
+
+std::string ConvertWideToNarrow(const std::wstring& wideString)
+{
+	if (wideString.empty()) return std::string();
+
+	int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wideString[0], (int)wideString.size(), NULL, 0, NULL, NULL);
+	std::string narrowString(size_needed, 0);
+	WideCharToMultiByte(CP_UTF8, 0, &wideString[0], (int)wideString.size(), &narrowString[0], size_needed, NULL, NULL);
+	return narrowString;
+}
+
+inline UINT safeSizeTToUINT(size_t sz)
+{
 	static const size_t szMaxUint = static_cast<size_t>(UINT_MAX);
-	if (sz > szMaxUint) {
+	if (sz > szMaxUint)
+	{
 		std::string err_msg = std::format("size_t to UINT cast overflow: {} exceeded max UINT value {}", sz, szMaxUint);
 		throw std::out_of_range(err_msg);
 	}
 	return static_cast<UINT>(sz);
 }
 
-std::filesystem::path executable_directory() {
+std::filesystem::path executable_directory()
+{
 	char buffer[MAX_PATH];
 	GetModuleFileNameA(nullptr, buffer, MAX_PATH);
 	return std::filesystem::path(buffer).parent_path();
@@ -49,45 +129,47 @@ ID3D11ComputeShader* CompileComputeShader(ID3D11Device* device, const std::files
 {
 	std::cout << "Compile compute shader: " << filePath << std::endl;
 
-	// Проверка существования файла
+	// Check if the file exists
 	if (!std::filesystem::exists(filePath))
 	{
-		std::cerr << "Shader file does not exist: " << filePath << std::endl;
-		return nullptr;
+		throw std::runtime_error("Shader file does not exist: " + filePath.string());
 	}
 
-	// Преобразование пути в LPCWSTR
+	// Convert path to LPCWSTR
 	const std::wstring wstrFilename = filePath.wstring();
 	LPCWSTR lpcwstrFilename = wstrFilename.c_str();
 
 	ID3DBlob* shaderBlob = nullptr;
 	ID3DBlob* errorBlob = nullptr;
 
-	// Компилируем шейдер из файла
+	// Compile the shader from the file
 	HRESULT hr = D3DCompileFromFile(
-		lpcwstrFilename,   // Путь к файлу шейдера
-		nullptr,           // Макросы
+		lpcwstrFilename,   // Path to the shader file
+		nullptr,           // Macros
 		nullptr,           // Include
-		"CSMain",          // Имя основной функции
-		"cs_5_0",          // Уровень шейдера (compute shader 5.0)
-		0, 0,              // Флаги компиляции
-		&shaderBlob,       // Выходной blob с байт-кодом
-		&errorBlob         // Ошибки компиляции
+		"CSMain",          // Name of the main function
+		"cs_5_0",          // Shader level (compute shader 5.0)
+		0, 0,              // Compilation flags
+		&shaderBlob,       // Output blob with bytecode
+		&errorBlob         // Compilation errors
 	);
 
-	if (FAILED(hr)) {
-		std::cerr << "Failed to compile compute shader from file: " << filePath << std::endl;
-		if (errorBlob) {
-			std::cerr << "Shader compilation error: " << (char*)errorBlob->GetBufferPointer() << std::endl;
+	if (FAILED(hr))
+	{
+		std::string errorMsg = "Failed to compile shader from file: '"+ filePath.string()+"'. Shader compilation error: ";
+		if (errorBlob)
+		{
+			errorMsg += std::string((char*)errorBlob->GetBufferPointer());
 			errorBlob->Release();
 		}
-		else {
-			std::cerr << "Shader compilation error: " << "Unknown" << std::endl;
+		else
+		{
+			errorMsg += "Unknown";
 		}
-		return nullptr;
+		ThrowIfFailure(hr, errorMsg);
 	}
 
-	// Создаем шейдер на основе байт-кода
+	// Create the shader from the bytecode
 	ID3D11ComputeShader* shader = nullptr;
 	device->CreateComputeShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &shader);
 
@@ -95,76 +177,168 @@ ID3D11ComputeShader* CompileComputeShader(ID3D11Device* device, const std::files
 	return shader;
 }
 
-ID3D11ComputeShader* LoadComputeShader(ID3D11Device* device, const std::filesystem::path& filePath)
+std::vector<char> ReadFileToByteVector(const std::filesystem::path& filePath)
 {
-	std::cout << "Read compute shader: " << filePath << std::endl;
-
-	// Проверка существования файла
+	// Check if the file exists
 	if (!std::filesystem::exists(filePath))
 	{
-		std::cerr << "Shader file does not exist: " << filePath << std::endl;
-		return nullptr;
+		throw std::runtime_error("Shader file does not exist: " + filePath.string());
 	}
 
-	// Открытие файла
+	// Open the file
 	std::ifstream file(filePath, std::ios::binary);
 	if (!file.is_open())
 	{
-		std::cerr << "Failed to open shader file: " << filePath << std::endl;
-		return nullptr;
+		throw std::runtime_error("Failed to open shader file: " + filePath.string());
 	}
 
-	// Определение размера файла
+	// Determine the file size
 	auto fileSize = std::filesystem::file_size(filePath);
 
-	// Чтение файла в память
+	// Read the file into memory
 	std::vector<char> shaderData(fileSize);
 	file.read(shaderData.data(), fileSize);
 	file.close();
 
-	// Создание шейдера из прочитанного байт-кода
+	return shaderData; // Move semantics are applied here
+}
+
+ID3D11ComputeShader* LoadComputeShader(ID3D11Device* device, const std::filesystem::path& filePath)
+{
+	std::cout << "Read compute shader: " << filePath << std::endl;
+
+	std::vector<char> shaderData = ReadFileToByteVector(filePath);
+
+	// Create the shader from the bytecode
 	ID3D11ComputeShader* shader = nullptr;
 	HRESULT hr = device->CreateComputeShader(shaderData.data(), shaderData.size(), nullptr, &shader);
-	if (FAILED(hr))
-	{
-		std::cerr << "Failed to create compute shader from .cso file!" << std::endl;
-	}
+	ThrowIfFailure(hr, "Failed to create compute shader from .cso file!");
+
+	return shader;
+}
+ID3D11VertexShader* LoadVertexShader(ID3D11Device* device, const std::filesystem::path& filePath)
+{
+	std::cout << "Read vertex shader: " << filePath << std::endl;
+
+	std::vector<char> shaderData = ReadFileToByteVector(filePath);
+
+	// Create the vertex shader from the bytecode
+	ID3D11VertexShader* shader = nullptr;
+	HRESULT hr = device->CreateVertexShader(shaderData.data(), shaderData.size(), nullptr, &shader);
+	ThrowIfFailure(hr, "Failed to create vertex shader from .cso file!");
 
 	return shader;
 }
 
+void DumpAdapterDesc(const std::string& name, IDXGIAdapter* adapter, const std::string& ident)
+{
+	DXGI_ADAPTER_DESC desc;
+	ThrowIfFailure(adapter->GetDesc(&desc), "Failed to get adapter's desc");
+	std::cout << ident << name << ": " << ConvertWideToNarrow(desc.Description) << std::endl;
+	std::cout << ident << "\tVendor ID: " << std::format("0x{:X}", desc.VendorId) << std::endl;
+	std::cout << ident << "\tDevice ID: " << std::format("0x{:X}", desc.DeviceId) << std::endl;
+	std::cout << ident << "\tSubSys ID: " << std::format("0x{:X}", desc.SubSysId) << std::endl;
+	std::cout << ident << "\tRevision: " << desc.Revision << std::endl;
+	std::cout << ident << "\tDedicated Video Memory: " << HumanReadableSize(desc.DedicatedVideoMemory) << std::endl;
+	std::cout << ident << "\tDedicated System Memory: " << HumanReadableSize(desc.DedicatedSystemMemory) << std::endl;
+	std::cout << ident << "\tShared System Memory: " << HumanReadableSize(desc.SharedSystemMemory) << std::endl;
+}
+
+std::pair<IDXGIAdapter*, D3D_DRIVER_TYPE> DetermineBestAdapter()
+{
+	IDXGIFactory* factory = nullptr;
+	HRESULT hr = CreateDXGIFactory(__uuidof(IDXGIFactory), reinterpret_cast<void**>(&factory));
+	ThrowIfFailure(hr, "Failed to create DXGIFactory.");
+
+	IDXGIAdapter* bestAdapter = nullptr;
+	SIZE_T maxDedicatedVideoMemory = 0;
+
+	std::cout << "Adapters" << std::endl;
+
+	for (UINT i = 0; ; ++i)
+	{
+		IDXGIAdapter* adapter = nullptr;
+		hr = factory->EnumAdapters(i, &adapter);
+		if (hr == DXGI_ERROR_NOT_FOUND) { break; } // No more adapters to enumerate	
+		ThrowIfFailure(hr, "Failed to enumerate adapters.");
+
+		DumpAdapterDesc("Adapter", adapter, "\t");
+
+		DXGI_ADAPTER_DESC desc;
+		ThrowIfFailure(adapter->GetDesc(&desc), "Failed to get adapter's desc");
+
+		// Omit software adapter
+		//   0x1414 : This is the Vendor ID for Microsoft.
+		//   0x8c   : This is the Device ID for the Microsoft Basic Render Driver.
+		if (desc.VendorId == 0x1414 && desc.DeviceId == 0x8c)
+		{
+			std::cout << "\tSoftware Adapter. Skip." << std::endl;
+			adapter->Release();
+			continue;
+		}
+
+		if (desc.DedicatedVideoMemory > maxDedicatedVideoMemory)
+		{
+			if (bestAdapter)
+			{
+				bestAdapter->Release();
+			}
+			bestAdapter = adapter;
+			maxDedicatedVideoMemory = desc.DedicatedVideoMemory;
+		}
+		else
+		{
+			adapter->Release();
+		}
+	}
+
+	factory->Release();
+	
+	D3D_DRIVER_TYPE driverType = bestAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
+	return { bestAdapter, driverType };
+}
+
 void InitD3D(HWND hWnd)
 {
-	// Описание структуры для создания устройства Direct3D
+	// Determine the best adapter
+	auto [bestAdapter, driverType] = DetermineBestAdapter();
+
+	if(bestAdapter) {
+		DumpAdapterDesc("Best Adapter", bestAdapter, "");
+	}
+
+	// Description structure for creating a Direct3D device
 	D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
 	D3D_FEATURE_LEVEL featureLevel;
 
-	// Создание устройства и контекста
+	// Create the device and context
 	HRESULT hr = D3D11CreateDevice(
-		nullptr,                    // Устройство адаптера по умолчанию
-		D3D_DRIVER_TYPE_HARDWARE,   // Используем драйвер GPU
-		nullptr,                    // Нет программного драйвера
-		0,                          // Нет специальных флагов
-		featureLevels,              // Уровни возможностей
-		1,                          // Количество уровней возможностей
-		D3D11_SDK_VERSION,          // Версия SDK
-		&device,                    // Устройство Direct3D
-		&featureLevel,              // Возвращаемый уровень возможностей
-		&context                    // Контекст устройства
+		bestAdapter,                // Best adapter device
+		driverType,				    // Use GPU driver
+		nullptr,                    // No software driver
+		0,                          // No special flags
+		featureLevels,              // Feature levels
+		1,                          // Number of feature levels
+		D3D11_SDK_VERSION,          // SDK version
+		&device,                    // Direct3D device
+		&featureLevel,              // Returned feature level
+		&context                    // Device context
 	);
+	ThrowIfFailure(hr, "Failed to create D3D11 device!");
 
-	if (FAILED(hr)) {
-		std::cerr << "Failed to create D3D11 device!" << std::endl;
-		return;
+	// Release the adapter if it was used
+	if (bestAdapter)
+	{
+		bestAdapter->Release();
 	}
 
-	// Создание шейдера (см. ниже функцию компиляции)
+	// Create the shader (see the compilation function below)
 	computeShader = LoadComputeShader(device, executable_directory() / "ComputeShader.cso");
 }
 
 void CreateBuffers(std::vector<Point>& points)
 {
-	// Описание структуры буфера
+	// Description structure for the buffer
 	D3D11_BUFFER_DESC bufferDesc = {};
 	bufferDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 	bufferDesc.Usage = D3D11_USAGE_DEFAULT;
@@ -173,13 +347,13 @@ void CreateBuffers(std::vector<Point>& points)
 	bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 
 	D3D11_SUBRESOURCE_DATA initData = {};
-	initData.pSysMem = points.data();  // Исходные данные точек
+	initData.pSysMem = points.data();  // Initial point data
 
-	// Создание входного буфера для чтения точек
+	// Create the input buffer for reading points
 	device->CreateBuffer(&bufferDesc, &initData, &pointsBufferA);
 	device->CreateBuffer(&bufferDesc, &initData, &pointsBufferB);
 
-	// Создание Shader Resource View для входного буфера
+	// Create Shader Resource View for the input buffer
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 	srvDesc.Buffer.FirstElement = 0;
@@ -189,7 +363,7 @@ void CreateBuffers(std::vector<Point>& points)
 	device->CreateShaderResourceView(pointsBufferA, &srvDesc, &pointsSRVA);
 	device->CreateShaderResourceView(pointsBufferB, &srvDesc, &pointsSRVB);
 
-	// Создание Unordered Access View для выходного буфера
+	// Create Unordered Access View for the output buffer
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 	uavDesc.Buffer.FirstElement = 0;
@@ -202,19 +376,17 @@ void CreateBuffers(std::vector<Point>& points)
 
 void RunComputeShader(ID3D11ShaderResourceView* readSRV, ID3D11UnorderedAccessView* writeUAV)
 {
-	// Устанавливаем шейдер
+	// Set the shader
 	context->CSSetShader(computeShader, nullptr, 0);
 
-	std::cout << "Set resources: read: " << static_cast<void*>(readSRV) << "; write: " << static_cast<void*>(writeUAV) << std::endl;
-
-	// Устанавливаем ресурсы
+	// Set the resources
 	context->CSSetShaderResources(0, 1, &readSRV);
 	context->CSSetUnorderedAccessViews(0, 1, &writeUAV, nullptr);
 
-	// Запуск шейдера: например, POINTS_COUNT точек -> POINTS_COUNT диспатчей
+	// Run the shader: for example, POINTS_COUNT points -> POINTS_COUNT dispatches
 	context->Dispatch(POINTS_COUNT, 1, 1);
 
-	// Сбрасываем ресурсы
+	// Reset the resources
 	ID3D11UnorderedAccessView* nullUAV = nullptr;
 	ID3D11ShaderResourceView* nullSRV = nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
@@ -224,7 +396,7 @@ void RunComputeShader(ID3D11ShaderResourceView* readSRV, ID3D11UnorderedAccessVi
 
 void ReadBackResults(ID3D11Buffer* writeBuffer, std::vector<Point>& points)
 {
-	// Описание буфера для чтения данных обратно на CPU
+	// Description of the buffer for reading data back to the CPU
 	D3D11_BUFFER_DESC readBackBufferDesc = {};
 	readBackBufferDesc.Usage = D3D11_USAGE_STAGING;
 	readBackBufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -235,16 +407,16 @@ void ReadBackResults(ID3D11Buffer* writeBuffer, std::vector<Point>& points)
 	ID3D11Buffer* readBackBuffer;
 	device->CreateBuffer(&readBackBufferDesc, nullptr, &readBackBuffer);
 
-	// Копируем данные из выходного буфера
+	// Copy data from the output buffer
 	context->CopyResource(readBackBuffer, writeBuffer);
 
-	// Маппинг данных для чтения
+	// Map the data for reading
 	D3D11_MAPPED_SUBRESOURCE mappedResource;
 	context->Map(readBackBuffer, 0, D3D11_MAP_READ, 0, &mappedResource);
 
 	memcpy(points.data(), mappedResource.pData, sizeof(Point) * points.size());
 
-	// Размаппинг ресурса
+	// Unmap the resource
 	context->Unmap(readBackBuffer, 0);
 
 	readBackBuffer->Release();
@@ -261,26 +433,30 @@ void ComputeLoop(std::vector<Point>& points, int numIterations)
 
 	for (int i = 0; i < numIterations; ++i)
 	{
-		// Запускаем шейдер
+		std::cout << "Iteration " << i << std::endl;
+
+		// Run the compute shader
 		RunComputeShader(currentReadSRV, currentWriteUAV);
 
-		// Считываем результаты
+		// Read back the results
 		ReadBackResults(currentWriteBuffer, points);
 
-		// Переключаем буферы
+		// Swap the buffers
 		std::swap(currentReadBuffer, currentWriteBuffer);
 		std::swap(currentReadSRV, currentWriteSRV);
 		std::swap(currentReadUAV, currentWriteUAV);
 
-		// Выводим результаты (например, для отладки)
+		// Output the results (for debugging)
 		size_t idx = 0;
 		for (const auto& point : points)
 		{
 			++idx;
-			std::cout << "[" << idx << "] " << std::fixed << std::setprecision(4);
-			std::cout << "Position: (" << point.position[0] << ", " << point.position[1] << ", " << point.position[2] << "); ";
-			std::cout << "Velocity: (" << point.velocity[0] << ", " << point.velocity[1] << ", " << point.velocity[2] << ")";
-			std::cout << std::defaultfloat << std::endl;
+			std::cout << std::format(
+				"[{}] Position: ({:.6f}, {:.6f}, {:.6f}); Velocity: ({:.6f}, {:.6f}, {:.6f})\n",
+				idx,
+				point.position[0], point.position[1], point.position[2],
+				point.velocity[0], point.velocity[1], point.velocity[2]
+			);
 		}
 		std::cout << std::endl;
 	}
@@ -299,18 +475,14 @@ void Cleanup()
 	if (context) context->Release();
 }
 
-int main()
+void run()
 {
-	std::cout << "Hello World" << std::endl;
-
-	std::cout << "Working in: " << std::filesystem::current_path() << std::endl;
-
 	HWND hWnd = nullptr;
 
-	// Инициализируем Direct3D
+	// Initialize Direct3D
 	InitD3D(hWnd);
 
-	// Инициализируем точки
+	// Create initial point data
 	std::vector<Point> points(POINTS_COUNT);
 	for (auto& point : points)
 	{
@@ -320,14 +492,30 @@ int main()
 		point.velocity[0] = point.velocity[1] = point.velocity[2] = 0.0f;
 	}
 
-	// Создаем буферы
+	// Create buffers for point data
 	CreateBuffers(points);
 
-	// Выполняем вычисления в цикле
+	// Run the compute shader loop
 	ComputeLoop(points, 10);
 
-	// Очистка ресурсов
+	// Cleanup (assuming Cleanup is already defined)
 	Cleanup();
+}
+
+int main()
+{
+	std::cout << "Hello World" << std::endl;
+	std::cout << "Working in: " << std::filesystem::current_path() << std::endl;
+
+	try
+	{
+		run();
+	}
+	catch (const std::exception& e)
+	{
+		std::cerr << "Error: " << e.what() << std::endl;
+		return 1;
+	}
 
 	return 0;
 }
