@@ -26,5 +26,8 @@
     <FxCompile Include="VertexShader.hlsl">
       <Filter>Source Files</Filter>
     </FxCompile>
+    <FxCompile Include="GeometryShader.hlsl">
+      <Filter>Source Files</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>

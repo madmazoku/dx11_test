@@ -23,18 +23,29 @@ struct Point
 	float velocity[3];
 };
 
+struct Vertex
+{
+	float position[4];
+};
+
 const size_t POINTS_COUNT = 10;
 
-ID3D11Device* device = nullptr;                // Direct3D device
-ID3D11DeviceContext* context = nullptr;        // Device context for executing commands
-ID3D11ComputeShader* computeShader = nullptr;  // Compute shader
+ID3D11Device* device = nullptr;                  // Direct3D device
+ID3D11DeviceContext* context = nullptr;          // Device context for executing commands
 
-ID3D11Buffer* pointsBufferA = nullptr;        // Buffer A with point data
-ID3D11Buffer* pointsBufferB = nullptr;        // Buffer B with point data
-ID3D11ShaderResourceView* pointsSRVA = nullptr; // Resource View A for reading the buffer
-ID3D11ShaderResourceView* pointsSRVB = nullptr; // Resource View B for reading the buffer
+ID3D11ComputeShader* computeShader = nullptr;    // Compute shader
+ID3D11Buffer* pointsBufferA = nullptr;           // Buffer A with point data
+ID3D11Buffer* pointsBufferB = nullptr;           // Buffer B with point data
+ID3D11ShaderResourceView* pointsSRVA = nullptr;  // Resource View A for reading the buffer
+ID3D11ShaderResourceView* pointsSRVB = nullptr;  // Resource View B for reading the buffer
 ID3D11UnorderedAccessView* pointsUAVA = nullptr; // Unordered Access View A for writing to the buffer
 ID3D11UnorderedAccessView* pointsUAVB = nullptr; // Unordered Access View B for writing to the buffer
+
+ID3D11VertexShader* vertexShader = nullptr;      // Vertex shader
+ID3D11Buffer* vertexOutputBuffer = nullptr;      // Buffer for the vertex shader output
+
+ID3D11GeometryShader* geometryShader = nullptr;     // Geometry shader
+ID3D11Buffer* geometryOutputBuffer = nullptr;     // Buffer to capture shader output
 
 std::string HumanReadableSize(uint64_t size)
 {
@@ -107,7 +118,7 @@ std::string ConvertWideToNarrow(const std::wstring& wideString)
 	return narrowString;
 }
 
-inline UINT safeSizeTToUINT(size_t sz)
+inline UINT SafeSizeTToUINT(size_t sz)
 {
 	static const size_t szMaxUint = static_cast<size_t>(UINT_MAX);
 	if (sz > szMaxUint)
@@ -118,63 +129,19 @@ inline UINT safeSizeTToUINT(size_t sz)
 	return static_cast<UINT>(sz);
 }
 
-std::filesystem::path executable_directory()
+std::filesystem::path ExecutableDirectory()
 {
 	char buffer[MAX_PATH];
 	GetModuleFileNameA(nullptr, buffer, MAX_PATH);
 	return std::filesystem::path(buffer).parent_path();
 }
 
-ID3D11ComputeShader* CompileComputeShader(ID3D11Device* device, const std::filesystem::path& filePath)
+template <typename T>
+size_t GetBufferSize(ID3D11Buffer* buffer)
 {
-	std::cout << "Compile compute shader: " << filePath << std::endl;
-
-	// Check if the file exists
-	if (!std::filesystem::exists(filePath))
-	{
-		throw std::runtime_error("Shader file does not exist: " + filePath.string());
-	}
-
-	// Convert path to LPCWSTR
-	const std::wstring wstrFilename = filePath.wstring();
-	LPCWSTR lpcwstrFilename = wstrFilename.c_str();
-
-	ID3DBlob* shaderBlob = nullptr;
-	ID3DBlob* errorBlob = nullptr;
-
-	// Compile the shader from the file
-	HRESULT hr = D3DCompileFromFile(
-		lpcwstrFilename,   // Path to the shader file
-		nullptr,           // Macros
-		nullptr,           // Include
-		"CSMain",          // Name of the main function
-		"cs_5_0",          // Shader level (compute shader 5.0)
-		0, 0,              // Compilation flags
-		&shaderBlob,       // Output blob with bytecode
-		&errorBlob         // Compilation errors
-	);
-
-	if (FAILED(hr))
-	{
-		std::string errorMsg = "Failed to compile shader from file: '"+ filePath.string()+"'. Shader compilation error: ";
-		if (errorBlob)
-		{
-			errorMsg += std::string((char*)errorBlob->GetBufferPointer());
-			errorBlob->Release();
-		}
-		else
-		{
-			errorMsg += "Unknown";
-		}
-		ThrowIfFailure(hr, errorMsg);
-	}
-
-	// Create the shader from the bytecode
-	ID3D11ComputeShader* shader = nullptr;
-	device->CreateComputeShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &shader);
-
-	shaderBlob->Release();
-	return shader;
+	D3D11_BUFFER_DESC desc;
+	buffer->GetDesc(&desc);
+	return desc.ByteWidth / sizeof(T);
 }
 
 std::vector<char> ReadFileToByteVector(const std::filesystem::path& filePath)
@@ -216,6 +183,7 @@ ID3D11ComputeShader* LoadComputeShader(ID3D11Device* device, const std::filesyst
 
 	return shader;
 }
+
 ID3D11VertexShader* LoadVertexShader(ID3D11Device* device, const std::filesystem::path& filePath)
 {
 	std::cout << "Read vertex shader: " << filePath << std::endl;
@@ -225,6 +193,20 @@ ID3D11VertexShader* LoadVertexShader(ID3D11Device* device, const std::filesystem
 	// Create the vertex shader from the bytecode
 	ID3D11VertexShader* shader = nullptr;
 	HRESULT hr = device->CreateVertexShader(shaderData.data(), shaderData.size(), nullptr, &shader);
+	ThrowIfFailure(hr, "Failed to create vertex shader from .cso file!");
+
+	return shader;
+}
+
+ID3D11GeometryShader* LoadGeometryShader(ID3D11Device* device, const std::filesystem::path& filePath)
+{
+	std::cout << "Read geometry shader: " << filePath << std::endl;
+
+	std::vector<char> shaderData = ReadFileToByteVector(filePath);
+
+	// Create the vertex shader from the bytecode
+	ID3D11GeometryShader* shader = nullptr;
+	HRESULT hr = device->CreateGeometryShader(shaderData.data(), shaderData.size(), nullptr, &shader);
 	ThrowIfFailure(hr, "Failed to create vertex shader from .cso file!");
 
 	return shader;
@@ -259,7 +241,7 @@ std::pair<IDXGIAdapter*, D3D_DRIVER_TYPE> DetermineBestAdapter()
 	{
 		IDXGIAdapter* adapter = nullptr;
 		hr = factory->EnumAdapters(i, &adapter);
-		if (hr == DXGI_ERROR_NOT_FOUND) { break; } // No more adapters to enumerate	
+		if (hr == DXGI_ERROR_NOT_FOUND) { break; } // No more adapters to enumerate
 		ThrowIfFailure(hr, "Failed to enumerate adapters.");
 
 		DumpAdapterDesc("Adapter", adapter, "\t");
@@ -293,7 +275,7 @@ std::pair<IDXGIAdapter*, D3D_DRIVER_TYPE> DetermineBestAdapter()
 	}
 
 	factory->Release();
-	
+
 	D3D_DRIVER_TYPE driverType = bestAdapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
 	return { bestAdapter, driverType };
 }
@@ -303,7 +285,8 @@ void InitD3D(HWND hWnd)
 	// Determine the best adapter
 	auto [bestAdapter, driverType] = DetermineBestAdapter();
 
-	if(bestAdapter) {
+	if (bestAdapter)
+	{
 		DumpAdapterDesc("Best Adapter", bestAdapter, "");
 	}
 
@@ -332,46 +315,87 @@ void InitD3D(HWND hWnd)
 		bestAdapter->Release();
 	}
 
-	// Create the shader (see the compilation function below)
-	computeShader = LoadComputeShader(device, executable_directory() / "ComputeShader.cso");
+	// Create the shaders
+	computeShader = LoadComputeShader(device, ExecutableDirectory() / "ComputeShader.cso");
+	vertexShader = LoadVertexShader(device, ExecutableDirectory() / "VertexShader.vso");
+	geometryShader = LoadGeometryShader(device, ExecutableDirectory() / "GeometryShader.gso");
 }
 
-void CreateBuffers(std::vector<Point>& points)
+void DumpBufferDesc(const std::string& name, ID3D11Buffer* buffer)
 {
-	// Description structure for the buffer
+	D3D11_BUFFER_DESC desc;
+	buffer->GetDesc(&desc);
+	std::cout << "Buffer " << name << " description:" << std::endl;
+	std::cout << "\tUsage: " << desc.Usage << std::endl;
+	std::cout << "\tByteWidth: " << desc.ByteWidth << std::endl;
+	std::cout << "\tStructureByteStride: " << desc.StructureByteStride << std::endl;
+	std::cout << "\tBindFlags: " << desc.BindFlags << std::endl;
+	std::cout << "\tCPUAccessFlags: " << desc.CPUAccessFlags << std::endl;
+	std::cout << "\tMiscFlags: " << desc.MiscFlags << std::endl;
+}
+
+void CreateComputeBuffers(std::vector<Point>& points)
+{
+	// Create the buffers for read/write position+velocity data
 	D3D11_BUFFER_DESC bufferDesc = {};
 	bufferDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 	bufferDesc.Usage = D3D11_USAGE_DEFAULT;
-	bufferDesc.ByteWidth = safeSizeTToUINT(sizeof(Point) * points.size());
+	bufferDesc.ByteWidth = SafeSizeTToUINT(sizeof(Point) * points.size());
 	bufferDesc.StructureByteStride = sizeof(Point);
 	bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 
 	D3D11_SUBRESOURCE_DATA initData = {};
 	initData.pSysMem = points.data();  // Initial point data
 
-	// Create the input buffer for reading points
-	device->CreateBuffer(&bufferDesc, &initData, &pointsBufferA);
-	device->CreateBuffer(&bufferDesc, &initData, &pointsBufferB);
+	HRESULT hr;
+	hr = device->CreateBuffer(&bufferDesc, &initData, &pointsBufferA);
+	ThrowIfFailure(hr, "Failed to create buffer A");
+	DumpBufferDesc("Buffer A", pointsBufferA);
+
+	hr = device->CreateBuffer(&bufferDesc, &initData, &pointsBufferB);
+	ThrowIfFailure(hr, "Failed to create buffer B");
+	DumpBufferDesc("Buffer B", pointsBufferB);
 
 	// Create Shader Resource View for the input buffer
 	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
 	srvDesc.Buffer.FirstElement = 0;
-	srvDesc.Buffer.NumElements = safeSizeTToUINT(points.size());
+	srvDesc.Buffer.NumElements = SafeSizeTToUINT(points.size());
 	srvDesc.Format = DXGI_FORMAT_UNKNOWN;
 
-	device->CreateShaderResourceView(pointsBufferA, &srvDesc, &pointsSRVA);
-	device->CreateShaderResourceView(pointsBufferB, &srvDesc, &pointsSRVB);
+	hr = device->CreateShaderResourceView(pointsBufferA, &srvDesc, &pointsSRVA);
+	ThrowIfFailure(hr, "Failed to create SRV A");
+	hr = device->CreateShaderResourceView(pointsBufferB, &srvDesc, &pointsSRVB);
+	ThrowIfFailure(hr, "Failed to create SRV B");
 
 	// Create Unordered Access View for the output buffer
 	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
 	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 	uavDesc.Buffer.FirstElement = 0;
-	uavDesc.Buffer.NumElements = safeSizeTToUINT(points.size());
+	uavDesc.Buffer.NumElements = SafeSizeTToUINT(points.size());
 	uavDesc.Format = DXGI_FORMAT_UNKNOWN;
 
-	device->CreateUnorderedAccessView(pointsBufferA, &uavDesc, &pointsUAVA);
-	device->CreateUnorderedAccessView(pointsBufferB, &uavDesc, &pointsUAVB);
+	hr = device->CreateUnorderedAccessView(pointsBufferA, &uavDesc, &pointsUAVA);
+	ThrowIfFailure(hr, "Failed to create UAV A");
+	hr = device->CreateUnorderedAccessView(pointsBufferB, &uavDesc, &pointsUAVB);
+	ThrowIfFailure(hr, "Failed to create UAV B");
+}
+
+void CreateVertexBuffers(std::vector<Vertex>& vertexes)
+{
+	// Create the buffer for the vertex shader output
+	D3D11_BUFFER_DESC bufferDesc = {};
+	bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	bufferDesc.ByteWidth = SafeSizeTToUINT(sizeof(Vertex) * vertexes.size());
+	bufferDesc.StructureByteStride = sizeof(Vertex);
+	bufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER | D3D11_BIND_STREAM_OUTPUT;
+
+	D3D11_SUBRESOURCE_DATA initData = {};
+	initData.pSysMem = vertexes.data();  // Initial point data
+
+	HRESULT hr = device->CreateBuffer(&bufferDesc, nullptr, &vertexOutputBuffer);
+	ThrowIfFailure(hr, "Failed to create vertex output buffer");
+	DumpBufferDesc("Vertex Output", vertexOutputBuffer);
 }
 
 void RunComputeShader(ID3D11ShaderResourceView* readSRV, ID3D11UnorderedAccessView* writeUAV)
@@ -386,7 +410,7 @@ void RunComputeShader(ID3D11ShaderResourceView* readSRV, ID3D11UnorderedAccessVi
 	// Run the shader: for example, POINTS_COUNT points -> POINTS_COUNT dispatches
 	context->Dispatch(POINTS_COUNT, 1, 1);
 
-	// Reset the resources
+	// Unset the resources
 	ID3D11UnorderedAccessView* nullUAV = nullptr;
 	ID3D11ShaderResourceView* nullSRV = nullptr;
 	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
@@ -394,25 +418,55 @@ void RunComputeShader(ID3D11ShaderResourceView* readSRV, ID3D11UnorderedAccessVi
 	context->CSSetShader(nullptr, nullptr, 0);
 }
 
-void ReadBackResults(ID3D11Buffer* writeBuffer, std::vector<Point>& points)
+void RunVertexShader(ID3D11ShaderResourceView* readSRV)
 {
+	// Set the shader
+	context->VSSetShader(vertexShader, nullptr, 0);
+
+	// Set the resources
+	UINT stride = sizeof(Vertex);
+	UINT offset = 0;
+	context->VSSetShaderResources(0, 1, &readSRV);
+	context->SOSetTargets(1, &vertexOutputBuffer, &offset);
+
+	// Draw call to process the data with the vertex shader
+	context->Draw(POINTS_COUNT, 0);
+
+	// Unset the resources
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	ID3D11Buffer* nullBuffer = nullptr;
+	context->VSSetShaderResources(0, 1, &nullSRV);
+	context->SOSetTargets(1, &nullBuffer, &offset);
+	context->VSSetShader(nullptr, nullptr, 0);
+}
+
+void ReadBackComputeResults(ID3D11Buffer* buffer, std::vector<Point>& points)
+{
+	DumpBufferDesc("Compute", buffer);
+
 	// Description of the buffer for reading data back to the CPU
 	D3D11_BUFFER_DESC readBackBufferDesc = {};
 	readBackBufferDesc.Usage = D3D11_USAGE_STAGING;
-	readBackBufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-	readBackBufferDesc.ByteWidth = safeSizeTToUINT(sizeof(Point) * points.size());
+	readBackBufferDesc.ByteWidth = SafeSizeTToUINT(sizeof(Point) * points.size());
 	readBackBufferDesc.StructureByteStride = sizeof(Point);
+	readBackBufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 	readBackBufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 
 	ID3D11Buffer* readBackBuffer;
-	device->CreateBuffer(&readBackBufferDesc, nullptr, &readBackBuffer);
+	ThrowIfFailure(
+		device->CreateBuffer(&readBackBufferDesc, nullptr, &readBackBuffer),
+		"Failed to create compute read back buffer"
+	);
 
 	// Copy data from the output buffer
-	context->CopyResource(readBackBuffer, writeBuffer);
+	context->CopyResource(readBackBuffer, buffer);
 
 	// Map the data for reading
 	D3D11_MAPPED_SUBRESOURCE mappedResource;
-	context->Map(readBackBuffer, 0, D3D11_MAP_READ, 0, &mappedResource);
+	ThrowIfFailure(
+		context->Map(readBackBuffer, 0, D3D11_MAP_READ, 0, &mappedResource),
+		"Failed to map compute read back buffer"
+	);
 
 	memcpy(points.data(), mappedResource.pData, sizeof(Point) * points.size());
 
@@ -422,7 +476,42 @@ void ReadBackResults(ID3D11Buffer* writeBuffer, std::vector<Point>& points)
 	readBackBuffer->Release();
 }
 
-void ComputeLoop(std::vector<Point>& points, int numIterations)
+void ReadBackVertexResults(std::vector<Vertex>& vertexes)
+{
+	DumpBufferDesc("Vertex", vertexOutputBuffer);
+
+	// Create a staging buffer for reading back data
+	D3D11_BUFFER_DESC readBackBufferDesc = {};
+	readBackBufferDesc.Usage = D3D11_USAGE_STAGING;
+	readBackBufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	readBackBufferDesc.ByteWidth = SafeSizeTToUINT(sizeof(Vertex) * vertexes.size());
+	readBackBufferDesc.StructureByteStride = sizeof(Vertex);
+	readBackBufferDesc.BindFlags = 0;
+	readBackBufferDesc.MiscFlags = 0;
+
+	ID3D11Buffer* readBackBuffer;
+	ThrowIfFailure(
+		device->CreateBuffer(&readBackBufferDesc, nullptr, &readBackBuffer),
+		"Failed to create vertex read back buffer"
+	);
+
+	// Copy data from the output buffer
+	context->CopyResource(readBackBuffer, vertexOutputBuffer);
+
+	// Map the data for reading
+	D3D11_MAPPED_SUBRESOURCE mappedResource;
+	ThrowIfFailure(
+		context->Map(readBackBuffer, 0, D3D11_MAP_READ, 0, &mappedResource),
+		"Failed to map vertex read back buffer"
+	);
+	memcpy(vertexes.data(), mappedResource.pData, sizeof(Vertex) * vertexes.size());
+
+	context->Unmap(readBackBuffer, 0);
+
+	readBackBuffer->Release();
+}
+
+void ComputeLoop(std::vector<Point>& points, std::vector<Vertex>& vertexes, int numIterations)
 {
 	ID3D11Buffer* currentReadBuffer = pointsBufferA;
 	ID3D11Buffer* currentWriteBuffer = pointsBufferB;
@@ -435,11 +524,13 @@ void ComputeLoop(std::vector<Point>& points, int numIterations)
 	{
 		std::cout << "Iteration " << i << std::endl;
 
-		// Run the compute shader
+		// Run shaders
 		RunComputeShader(currentReadSRV, currentWriteUAV);
+		RunVertexShader(currentWriteSRV);
 
 		// Read back the results
-		ReadBackResults(currentWriteBuffer, points);
+		ReadBackComputeResults(currentWriteBuffer, points);
+		ReadBackVertexResults(vertexes);
 
 		// Swap the buffers
 		std::swap(currentReadBuffer, currentWriteBuffer);
@@ -448,21 +539,35 @@ void ComputeLoop(std::vector<Point>& points, int numIterations)
 
 		// Output the results (for debugging)
 		size_t idx = 0;
-		for (const auto& point : points)
+		for (size_t idx = 0; idx < POINTS_COUNT; ++idx)
 		{
-			++idx;
+			auto& point = points[idx];
+
 			std::cout << std::format(
-				"[{}] Position: ({:.6f}, {:.6f}, {:.6f}); Velocity: ({:.6f}, {:.6f}, {:.6f})\n",
+				"[{}] Position: ({:.6f}, {:.6f}, {:.6f}); Velocity: ({:.6f}, {:.6f}, {:.6f})",
 				idx,
 				point.position[0], point.position[1], point.position[2],
 				point.velocity[0], point.velocity[1], point.velocity[2]
-			);
+			) << std::endl;
+
+			auto& vertex = vertexes[idx];
+			std::cout << std::format(
+				"[{}] Vertex: ({:.6f}, {:.6f}, {:.6f}, {:.6f})",
+				idx,
+				vertex.position[0], vertex.position[1], vertex.position[2], vertex.position[3]
+			) << std::endl;
 		}
 		std::cout << std::endl;
 	}
 }
 
-void Cleanup()
+void CleanupMain()
+{
+	if (device) device->Release();
+	if (context) context->Release();
+}
+
+void CleanupCompute()
 {
 	if (computeShader) computeShader->Release();
 	if (pointsBufferA) pointsBufferA->Release();
@@ -471,8 +576,19 @@ void Cleanup()
 	if (pointsSRVB) pointsSRVB->Release();
 	if (pointsUAVA) pointsUAVA->Release();
 	if (pointsUAVB) pointsUAVB->Release();
-	if (device) device->Release();
-	if (context) context->Release();
+}
+
+void CleanupVertex()
+{
+	if (vertexShader) vertexShader->Release();
+	if (vertexOutputBuffer) vertexOutputBuffer->Release();
+}
+
+void Cleanup()
+{
+	CleanupVertex();
+	CleanupCompute();
+	CleanupMain();
 }
 
 void run()
@@ -484,21 +600,30 @@ void run()
 
 	// Create initial point data
 	std::vector<Point> points(POINTS_COUNT);
-	for (auto& point : points)
+	std::vector<Vertex> vertexes(POINTS_COUNT);
+	for (size_t idx = 0; idx < POINTS_COUNT; ++idx)
 	{
+		auto& point = points[idx];
 		point.position[0] = rand() % 100 / 100.0f;
 		point.position[1] = rand() % 100 / 100.0f;
 		point.position[2] = rand() % 100 / 100.0f;
-		point.velocity[0] = point.velocity[1] = point.velocity[2] = 0.0f;
+		point.velocity[0] = points[idx].velocity[1] = points[idx].velocity[2] = 0.0f;
+
+		auto& vertex = vertexes[idx];
+		vertex.position[0] = point.position[0];
+		vertex.position[1] = point.position[0];
+		vertex.position[2] = point.position[0];
+		vertex.position[3] = 1.0f;
 	}
 
 	// Create buffers for point data
-	CreateBuffers(points);
+	CreateComputeBuffers(points);
+	CreateVertexBuffers(vertexes);
 
 	// Run the compute shader loop
-	ComputeLoop(points, 10);
+	ComputeLoop(points, vertexes, 5);
 
-	// Cleanup (assuming Cleanup is already defined)
+	// Cleanup
 	Cleanup();
 }
 
