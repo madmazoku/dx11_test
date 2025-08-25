@@ -1,5 +1,6 @@
 #include "Logger.h"
 #include <iomanip>
+#include <chrono>
 
 std::unique_ptr<Logger> Logger::instance = nullptr;
 std::once_flag Logger::initFlag;
@@ -39,15 +40,9 @@ void Logger::Initialize(const std::string& filename, LogLevel level, bool enable
 
 std::string Logger::GetTimestamp() const {
     auto now = std::chrono::system_clock::now();
-    auto timeT = std::chrono::system_clock::to_time_t(now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()) % 1000;
+    auto time_point = std::chrono::current_zone()->to_local(now);
     
-    std::stringstream ss;
-    ss << std::put_time(std::localtime(&timeT), "%Y-%m-%d %H:%M:%S");
-    ss << '.' << std::setfill('0') << std::setw(3) << ms.count();
-    
-    return ss.str();
+    return std::format("{:%Y-%m-%d %H:%M:%S}", time_point);
 }
 
 std::string Logger::LogLevelToString(LogLevel level) const {
