@@ -1,0 +1,48 @@
+{
+    "simulation": {
+        "particleCount": 256,
+        "timeStep": 0.016,
+        "gravity": [0.0, -9.81, 0.0],
+        "damping": 0.995,
+        "springConstant": 100.0,
+        "restLength": 0.3,
+        "boundaryMin": [-8.0, -8.0, -8.0],
+        "boundaryMax": [8.0, 8.0, 8.0],
+        "maxFrames": 0,
+        "enableDebugOutput": true,
+        "debugOutputInterval": 60
+    },
+    "rendering": {
+        "windowWidth": 1440,
+        "windowHeight": 900,
+        "enableVSync": true,
+        "clearColor": [0.05, 0.05, 0.15, 1.0],
+        "sphereRadius": 0.08,
+        "camera": {
+            "radius": 15.0,
+            "height": 3.0,
+            "rotationSpeed": 0.8,
+            "fov": 50.0,
+            "nearPlane": 0.1,
+            "farPlane": 200.0,
+            "enableInteractive": true,
+            "zoomMin": 0.05,
+            "zoomMax": 1.0,
+            "zoomStep": 0.03,
+            "rotationSensitivity": 0.008,
+            "enableAutoCentering": true
+        },
+        "lighting": {
+            "direction": [-0.5, -0.8, -0.6],
+            "intensity": 1.2,
+            "color": [1.0, 0.95, 0.9],
+            "ambientIntensity": 0.3,
+            "specularPower": 64.0
+        }
+    },
+    "performance": {
+        "enableProfiling": true,
+        "logFrameTime": false,
+        "targetFPS": 60.0
+    }
+}

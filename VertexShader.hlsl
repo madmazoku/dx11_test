@@ -1,12 +1,13 @@
-struct Point
+struct Particle
 {
     float3 position;
     float3 oldPosition;
     float3 acceleration;
+    float padding;
 };
 
 // Input buffer from the compute shader
-StructuredBuffer<Point> pointsOut : register(t0);
+StructuredBuffer<Particle> particlesOut : register(t0);
 
 // Constant buffer for transformation matrices
 cbuffer TransformBuffer : register(b0)
@@ -31,14 +32,14 @@ VSOutput VSMain(uint id : SV_VertexID)
 {
     VSOutput output;
     
-    // Extract the position from pointsOut
-    Point p = pointsOut[id];
+    // Extract the particle data
+    Particle particle = particlesOut[id];
     
     // Transform to world space then to clip space
-    float4 worldPos = mul(float4(p.position, 1.0f), worldMatrix);
+    float4 worldPos = mul(float4(particle.position, 1.0f), worldMatrix);
     output.position = mul(worldPos, viewProjectionMatrix);
     output.worldPos = worldPos.xyz;
-    output.velocity = p.position - p.oldPosition; // Current velocity from Verlet
+    output.velocity = particle.position - particle.oldPosition; // Current velocity from Verlet
     output.pointId = id;
     
     return output;

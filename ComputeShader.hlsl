@@ -1,26 +1,35 @@
-struct Point
+struct Particle
 {
     float3 position;
     float3 oldPosition;
     float3 acceleration;
+    float padding;
 };
 
-StructuredBuffer<Point> pointsIn : register(t0);
-RWStructuredBuffer<Point> pointsOut : register(u0);
+StructuredBuffer<Particle> particlesIn : register(t0);
+RWStructuredBuffer<Particle> particlesOut : register(u0);
 
-static const float k = 0.5f;
-static const float m = 1.0f;
-static const float r0 = 0.3f;
-static const float dt = 0.016f;  // ~60fps
-static const float damping = 0.98f;
-static const float3 gravity = float3(0.0f, -9.81f, 0.0f);
+// Simulation constants from constant buffer
+cbuffer SimulationConstants : register(b0)
+{
+    float springConstant;
+    float restLength;
+    float timeStep;
+    float damping;
+    float3 gravity;
+    float padding1;
+    float3 boundaryMin;
+    float padding2;
+    float3 boundaryMax;
+    float padding3;
+};
 
-float3 calcSpringForce(float3 displacement, float distance)
+float3 CalculateSpringForce(float3 displacement, float distance)
 {
     if (distance < 0.0001f) return float3(0, 0, 0);
     
     float3 direction = displacement / distance;
-    float force = k * (distance - r0);
+    float force = springConstant * (distance - restLength);
     return direction * force;
 }
 
@@ -29,46 +38,70 @@ void CSMain(uint3 dispatchID : SV_DispatchThreadID)
 {
     uint index = dispatchID.x;
     
-    uint numStructs;
-    uint stride;
-    pointsIn.GetDimensions(numStructs, stride);
+    uint numParticles, stride;
+    particlesIn.GetDimensions(numParticles, stride);
     
-    if (index >= numStructs) return;
+    if (index >= numParticles) return;
     
-    Point p = pointsIn[index];
+    Particle particle = particlesIn[index];
     
     // Calculate forces from other particles
-    float3 totalForce = gravity * m; // Add gravity
+    float3 totalForce = gravity; // Start with gravity
     
-    for (uint i = 0; i < numStructs; i++)
+    for (uint i = 0; i < numParticles; i++)
     {
         if (i != index)
         {
-            float3 displacement = pointsIn[i].position - p.position;
+            float3 displacement = particlesIn[i].position - particle.position;
             float distance = length(displacement);
             
-            if (distance > 0.0001f && distance < 2.0f) // Only interact with nearby particles
+            // Only interact with nearby particles to avoid expensive computations
+            if (distance > 0.0001f && distance < 2.0f * restLength)
             {
-                totalForce += calcSpringForce(displacement, distance);
+                totalForce += CalculateSpringForce(displacement, distance);
             }
         }
     }
     
     // Verlet integration
-    float3 newAcceleration = totalForce / m;
-    float3 newPosition = 2.0f * p.position - p.oldPosition + newAcceleration * dt * dt;
+    float3 newAcceleration = totalForce; // Assuming unit mass
+    float3 newPosition = 2.0f * particle.position - particle.oldPosition + newAcceleration * timeStep * timeStep;
     
     // Apply damping
-    newPosition = p.position + (newPosition - p.position) * damping;
+    newPosition = particle.position + (newPosition - particle.position) * damping;
     
-    // Boundary constraints (simple box)
-    newPosition = clamp(newPosition, float3(-5.0f, -5.0f, -5.0f), float3(5.0f, 5.0f, 5.0f));
+    // Boundary constraints with bounce
+    if (newPosition.x < boundaryMin.x) {
+        newPosition.x = boundaryMin.x;
+        newPosition = particle.position + (newPosition - particle.position) * 0.8f; // Bounce damping
+    }
+    if (newPosition.x > boundaryMax.x) {
+        newPosition.x = boundaryMax.x;
+        newPosition = particle.position + (newPosition - particle.position) * 0.8f;
+    }
+    if (newPosition.y < boundaryMin.y) {
+        newPosition.y = boundaryMin.y;
+        newPosition = particle.position + (newPosition - particle.position) * 0.8f;
+    }
+    if (newPosition.y > boundaryMax.y) {
+        newPosition.y = boundaryMax.y;
+        newPosition = particle.position + (newPosition - particle.position) * 0.8f;
+    }
+    if (newPosition.z < boundaryMin.z) {
+        newPosition.z = boundaryMin.z;
+        newPosition = particle.position + (newPosition - particle.position) * 0.8f;
+    }
+    if (newPosition.z > boundaryMax.z) {
+        newPosition.z = boundaryMax.z;
+        newPosition = particle.position + (newPosition - particle.position) * 0.8f;
+    }
     
-    // Update point
-    Point newPoint;
-    newPoint.oldPosition = p.position;
-    newPoint.position = newPosition;
-    newPoint.acceleration = newAcceleration;
+    // Update particle
+    Particle newParticle;
+    newParticle.oldPosition = particle.position;
+    newParticle.position = newPosition;
+    newParticle.acceleration = newAcceleration;
+    newParticle.padding = 0.0f;
     
-    pointsOut[index] = newPoint;
+    particlesOut[index] = newParticle;
 }

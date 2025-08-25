@@ -1,0 +1,20 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build DX11 Particle Simulation",
+			"type": "shell",
+			"command": "msbuild",
+			"args": [
+				"dx11_test.sln",
+				"/p:Configuration=Debug",
+				"/p:Platform=x64",
+				"/verbosity:minimal"
+			],
+			"group": "build",
+			"problemMatcher": [
+				"$msCompile"
+			]
+		}
+	]
+}
