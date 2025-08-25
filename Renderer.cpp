@@ -1,3 +1,20 @@
+/**
+ * @file Renderer.cpp
+ * @brief Advanced DirectX 11 particle rendering system
+ * 
+ * This file implements high-performance particle rendering with:
+ * - Icosphere-based geometry generation for smooth spherical particles
+ * - Phong lighting model with realistic material properties
+ * - Level-of-Detail (LOD) system for performance optimization
+ * - Frustum culling for efficient rendering of large particle counts
+ * - Multi-type material support with configurable properties
+ * - Real-time lighting and camera integration
+ * 
+ * The renderer uses DirectX 11 geometry shaders to dynamically generate
+ * detailed icosphere meshes from particle points, providing high visual
+ * quality while maintaining real-time performance.
+ */
+
 #include "Renderer.h"
 #include "Utilities.h"
 #include "Logger.h"
@@ -7,26 +24,42 @@
 
 using namespace DirectX;
 
+/**
+ * Constructor - Initialize renderer with DirectX device and configuration
+ * 
+ * Sets up the rendering system with the provided device, shader manager,
+ * and configuration. Prepares material data from particle type definitions
+ * and initializes camera parameters.
+ * 
+ * @param device         DirectX 11 device for GPU resource creation
+ * @param shaderManager  Manager for loading and using HLSL shaders
+ * @param configManager  Configuration containing rendering and material settings
+ */
 Renderer::Renderer(std::shared_ptr<D3DDevice> device, 
                    std::shared_ptr<ShaderManager> shaderManager,
                    std::shared_ptr<ConfigManager> configManager)
     : device(device), shaderManager(shaderManager), configManager(configManager) {
     
-    // Get configuration
+    // Load rendering configuration parameters
     const auto& renderConfig = configManager->GetRenderConfig();
     const auto& env = configManager->GetEnvironment();
     
+    // Initialize camera position from configuration
     cameraPosition = { 0.0f, renderConfig.cameraHeight, renderConfig.cameraRadius };
     
-    // Initialize material buffer array
+    // Build material array from particle type definitions for GPU upload
     materials.clear();
     for (const auto& particleType : configManager->GetParticleTypes()) {
         materials.push_back(particleType.material);
     }
 }
 
+/**
+ * Initialize renderer with default maximum particle count
+ * @return true if initialization successful, false otherwise
+ */
 bool Renderer::Initialize() {
-    return InitializeWithMaxParticles(100000); // Default max particles
+    return InitializeWithMaxParticles(100000); // Default max particles suitable for most systems
 }
 
 bool Renderer::InitializeWithMaxParticles(size_t maxParticles) {

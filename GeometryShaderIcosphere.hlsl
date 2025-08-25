@@ -1,52 +1,104 @@
-// Advanced Geometry Shader for Icosphere Generation with LOD
-// Generates icospheres (subdivided icosahedrons) for particle rendering
+/**
+ * @file GeometryShaderIcosphere.hlsl
+ * @brief Advanced geometry shader for dynamic icosphere generation with Level of Detail
+ * 
+ * This geometry shader generates detailed 3D icosphere geometry from particle points using
+ * procedural geometry generation. An icosphere is a spherical mesh created by subdividing
+ * a regular icosahedron, providing more uniform triangle distribution than UV spheres.
+ * 
+ * Key features:
+ * - Procedural icosphere generation from mathematical icosahedron base
+ * - Dynamic Level of Detail (LOD) based on distance to camera
+ * - Per-particle radius scaling for variable sphere sizes
+ * - Optimized triangle generation with backface culling
+ * - Smooth normal calculation for realistic lighting
+ * - Distance-based culling for performance optimization
+ * 
+ * The shader uses the golden ratio and mathematical properties of icosahedrons
+ * to generate perfectly uniform spherical surfaces. LOD levels control the
+ * subdivision depth, balancing visual quality with rendering performance.
+ * 
+ * @author DirectX 11 Particle System
+ * @date 2024
+ */
 
+/**
+ * @struct VS_OUTPUT  
+ * @brief Input structure from vertex shader containing particle data
+ * 
+ * Receives particle information processed by the vertex shader, including
+ * world position, type, and radius for icosphere generation.
+ */
 struct VS_OUTPUT
 {
-    float4 position : POSITION;
-    uint typeId : TEXCOORD0;
-    float radius : TEXCOORD1;
-    float3 worldPos : TEXCOORD2;
+    float4 position : POSITION;  ///< Particle center position in world space
+    uint typeId : TEXCOORD0;     ///< Particle type for material selection
+    float radius : TEXCOORD1;    ///< Scaled particle radius for icosphere size
+    float3 worldPos : TEXCOORD2; ///< World position for lighting calculations
 };
 
+/**
+ * @struct GS_OUTPUT
+ * @brief Output structure for pixel shader containing generated vertex data
+ * 
+ * Contains all data needed for realistic Phong lighting and material rendering.
+ */
 struct GS_OUTPUT
 {
-    float4 position : SV_POSITION;
-    float3 worldPos : TEXCOORD0;
-    float3 normal : TEXCOORD1;
-    float3 viewDir : TEXCOORD2;
-    uint typeId : TEXCOORD3;
-    float distanceToCamera : TEXCOORD4;
+    float4 position : SV_POSITION;      ///< Clip space position for rasterization
+    float3 worldPos : TEXCOORD0;        ///< World space position for lighting
+    float3 normal : TEXCOORD1;          ///< Surface normal for Phong shading
+    float3 viewDir : TEXCOORD2;         ///< View direction for specular calculations
+    uint typeId : TEXCOORD3;            ///< Particle type for material/color selection
+    float distanceToCamera : TEXCOORD4; ///< Distance to camera for fog/LOD effects
 };
 
-// Transform and camera constants
+/**
+ * @brief Transform matrices and camera parameters constant buffer
+ */
 cbuffer TransformBuffer : register(b0)
 {
-    matrix viewProjectionMatrix;
-    matrix worldMatrix;
-    float3 cameraPos;
-    float globalScale;
+    matrix viewProjectionMatrix; ///< Combined view * projection matrix
+    matrix worldMatrix;          ///< World transformation matrix (usually identity)
+    float3 cameraPos;            ///< Camera position in world space
+    float globalScale;           ///< Global scaling factor for all particles
 };
 
-// LOD and culling constants
+/**
+ * @brief Level of Detail and culling parameters constant buffer
+ * 
+ * Controls the geometric complexity and culling behavior based on distance
+ * and rendering performance requirements.
+ */
 cbuffer CullingBuffer : register(b1)
 {
-    float lodDistance0;     // High detail distance
-    float lodDistance1;     // Medium detail distance  
-    float lodDistance2;     // Low detail distance
-    float maxRenderDistance;
-    bool enableLOD;
-    bool enableDistanceCulling;
-    float2 padding;
+    float lodDistance0;     ///< Distance threshold for highest detail (LOD 0)
+    float lodDistance1;     ///< Distance threshold for medium detail (LOD 1)
+    float lodDistance2;     ///< Distance threshold for low detail (LOD 2)
+    float maxRenderDistance; ///< Maximum distance for particle rendering
+    bool enableLOD;         ///< Whether to enable dynamic LOD system
+    bool enableDistanceCulling; ///< Whether to enable distance-based culling
+    float2 padding;         ///< Padding for alignment
 };
 
-// Base icosahedron vertices (12 vertices)
-static const float PHI = 1.618033988749895f; // Golden ratio
-static const float INV_SQRT_5 = 0.4472135954999579f;
+//=============================================================================
+// Icosahedron Mathematical Foundation
+//=============================================================================
 
+// Mathematical constants for icosahedron construction
+static const float PHI = 1.618033988749895f;  ///< Golden ratio (φ = (1 + √5) / 2)
+static const float INV_SQRT_5 = 0.4472135954999579f; ///< 1/√5 for normalization
+
+/**
+ * @brief Base icosahedron vertices using golden ratio proportions
+ * 
+ * These 12 vertices define a regular icosahedron centered at origin with
+ * unit circumradius. The vertices are positioned using the golden ratio
+ * to ensure perfect geometric regularity and optimal triangle distribution.
+ */
 static const float3 IcosahedronVertices[12] = 
 {
-    float3(-1,  PHI,  0) * INV_SQRT_5,
+    float3(-1,  PHI,  0) * INV_SQRT_5,   ///< Top-front-left vertex
     float3( 1,  PHI,  0) * INV_SQRT_5,
     float3(-1, -PHI,  0) * INV_SQRT_5,
     float3( 1, -PHI,  0) * INV_SQRT_5,

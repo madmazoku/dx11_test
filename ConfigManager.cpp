@@ -1,9 +1,41 @@
+/**
+ * @file ConfigManager.cpp
+ * @brief Implementation of the ConfigManager class for configuration file handling
+ * 
+ * The ConfigManager provides comprehensive configuration management for the particle
+ * simulation system. It handles loading, parsing, and validation of JSON configuration
+ * files containing simulation parameters, rendering settings, and system preferences.
+ * 
+ * Key features:
+ * - JSON configuration file parsing with error handling
+ * - Default value fallbacks for missing parameters
+ * - Parameter validation with range checking
+ * - Hot-reloading of configuration files during runtime
+ * - Detailed logging of configuration loading and validation errors
+ * 
+ * The system supports both simulation parameters (particle counts, physics constants,
+ * boundaries) and rendering settings (window size, colors, camera parameters).
+ * 
+ * @author DirectX 11 Particle System
+ * @date 2024
+ */
+
 #include "ConfigManager.h"
 #include "Logger.h"
 #include <fstream>
 #include <sstream>
 #include <regex>
 
+/**
+ * @brief Loads configuration from a JSON file
+ * 
+ * Reads and parses a JSON configuration file, populating the internal configuration
+ * structures with the loaded values. Provides comprehensive error handling and
+ * default value fallbacks for missing or invalid parameters.
+ * 
+ * @param filename Path to the JSON configuration file to load
+ * @return true if the file was loaded and parsed successfully, false otherwise
+ */
 bool ConfigManager::LoadFromFile(const std::string& filename) {
     std::ifstream file(filename);
     if (!file.is_open()) {

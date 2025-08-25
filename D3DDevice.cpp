@@ -1,10 +1,47 @@
+/**
+ * @file D3DDevice.cpp
+ * @brief Implementation of the D3DDevice class for DirectX 11 device management
+ * 
+ * The D3DDevice class provides comprehensive DirectX 11 device initialization and
+ * management functionality. It handles the creation and configuration of the DirectX
+ * device, swap chain, render target views, depth/stencil buffers, and viewports.
+ * 
+ * Key features:
+ * - DirectX 11 device and context creation with feature level detection
+ * - DXGI swap chain setup with configurable MSAA support
+ * - Render target and depth/stencil buffer management
+ * - Viewport configuration and automatic resize handling
+ * - Debug layer integration for development builds
+ * - Comprehensive error handling with detailed HRESULT reporting
+ * 
+ * The class abstracts the complex DirectX initialization process and provides
+ * a clean interface for the rendering system to access GPU resources.
+ * 
+ * @author DirectX 11 Particle System
+ * @date 2024
+ */
+
 #include "D3DDevice.h"
 #include "Utilities.h"
 #include <dxgi.h>
 #include <iostream>
 
+/**
+ * @brief Constructs a D3DDevice with the specified render configuration
+ * @param renderConfig Configuration parameters for rendering setup
+ */
 D3DDevice::D3DDevice(const RenderConfig& renderConfig) : config(renderConfig) {}
 
+/**
+ * @brief Initializes the DirectX 11 device and rendering infrastructure
+ * 
+ * Performs complete DirectX 11 setup including device creation, swap chain
+ * configuration, render target setup, and depth buffer creation. Handles
+ * feature level detection and provides fallbacks for older hardware.
+ * 
+ * @param hWnd Handle to the window that will be used for rendering
+ * @return true if initialization succeeded, false if any step failed
+ */
 bool D3DDevice::Initialize(HWND hWnd) {
     try {
         if (!CreateDeviceAndSwapChain(hWnd)) return false;

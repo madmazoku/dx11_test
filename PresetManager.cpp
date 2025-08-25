@@ -1,10 +1,42 @@
+/**
+ * @file PresetManager.cpp
+ * @brief Implementation of the PresetManager class for managing simulation configuration presets
+ * 
+ * The PresetManager provides a convenient way to store, load, and switch between different
+ * simulation configurations. It includes several built-in presets optimized for different
+ * scenarios (performance, visual quality, special effects) and supports runtime preset
+ * switching with keyboard navigation.
+ * 
+ * @author DirectX 11 Particle System
+ * @date 2024
+ */
+
 #include "PresetManager.h"
 #include "Logger.h"
 
+/**
+ * @brief Constructs a new PresetManager and initializes default presets
+ * 
+ * Automatically populates the preset collection with several predefined configurations
+ * suitable for different use cases and performance requirements.
+ */
 PresetManager::PresetManager() {
     InitializeDefaultPresets();
 }
 
+/**
+ * @brief Initializes the collection of built-in simulation presets
+ * 
+ * Creates several predefined presets with different characteristics:
+ * - Default: Balanced performance and visual quality (256 particles)
+ * - Performance: Optimized for high framerate (128 particles)
+ * - Spectacular: High particle count for visual impact (512 particles)  
+ * - Zero-G: Zero gravity simulation with floating particles
+ * - Bouncy: High energy simulation with increased bouncing
+ * 
+ * Each preset defines complete simulation and rendering parameters including
+ * particle counts, physics constants, boundaries, and visual settings.
+ */
 void PresetManager::InitializeDefaultPresets() {
     // Default preset - balanced performance and visuals
     SimulationPreset defaultPreset;
@@ -97,6 +129,17 @@ void PresetManager::InitializeDefaultPresets() {
     presets[bouncyPreset.name] = bouncyPreset;
 }
 
+/**
+ * @brief Loads a specific preset by name into the provided configuration structures
+ * 
+ * Searches for the named preset and copies its simulation and rendering parameters
+ * into the provided configuration objects. Updates the current preset tracking.
+ * 
+ * @param name The name of the preset to load
+ * @param simConfig Reference to simulation configuration to populate
+ * @param renderConfig Reference to render configuration to populate
+ * @return true if preset was found and loaded successfully, false otherwise
+ */
 bool PresetManager::LoadPreset(const std::string& name, SimulationConfig& simConfig, RenderConfig& renderConfig) {
     auto it = presets.find(name);
     if (it == presets.end()) {
@@ -112,6 +155,18 @@ bool PresetManager::LoadPreset(const std::string& name, SimulationConfig& simCon
     return true;
 }
 
+/**
+ * @brief Saves current configuration parameters as a new preset
+ * 
+ * Creates a new preset entry with the specified name and description,
+ * storing the current simulation and rendering configurations for later recall.
+ * 
+ * @param name Unique name for the new preset
+ * @param description Human-readable description of the preset
+ * @param simConfig Current simulation configuration to save
+ * @param renderConfig Current render configuration to save
+ * @return true if preset was saved successfully
+ */
 bool PresetManager::SavePreset(const std::string& name, const std::string& description,
                               const SimulationConfig& simConfig, const RenderConfig& renderConfig) {
     SimulationPreset preset;
@@ -125,6 +180,11 @@ bool PresetManager::SavePreset(const std::string& name, const std::string& descr
     return true;
 }
 
+/**
+ * @brief Retrieves a list of all available preset names
+ * 
+ * @return Vector of strings containing all preset names in the collection
+ */
 std::vector<std::string> PresetManager::GetPresetNames() const {
     std::vector<std::string> names;
     for (const auto& pair : presets) {
@@ -133,11 +193,27 @@ std::vector<std::string> PresetManager::GetPresetNames() const {
     return names;
 }
 
+/**
+ * @brief Gets the description for a specific preset
+ * 
+ * @param name The name of the preset to query
+ * @return Description string for the preset, or empty string if not found
+ */
 std::string PresetManager::GetPresetDescription(const std::string& name) const {
     auto it = presets.find(name);
     return (it != presets.end()) ? it->second.description : "";
 }
 
+/**
+ * @brief Loads the next preset in the collection (with wrap-around)
+ * 
+ * Advances to the next preset in alphabetical order, wrapping around to the
+ * first preset if currently at the last one. Useful for keyboard navigation.
+ * 
+ * @param simConfig Reference to simulation configuration to populate
+ * @param renderConfig Reference to render configuration to populate
+ * @return true if a preset was loaded successfully
+ */
 bool PresetManager::LoadNextPreset(SimulationConfig& simConfig, RenderConfig& renderConfig) {
     auto names = GetPresetNames();
     if (names.empty()) return false;
@@ -156,6 +232,16 @@ bool PresetManager::LoadNextPreset(SimulationConfig& simConfig, RenderConfig& re
     return LoadPreset(*it, simConfig, renderConfig);
 }
 
+/**
+ * @brief Loads the previous preset in the collection (with wrap-around)
+ * 
+ * Moves to the previous preset in alphabetical order, wrapping around to the
+ * last preset if currently at the first one. Useful for keyboard navigation.
+ * 
+ * @param simConfig Reference to simulation configuration to populate
+ * @param renderConfig Reference to render configuration to populate
+ * @return true if a preset was loaded successfully
+ */
 bool PresetManager::LoadPreviousPreset(SimulationConfig& simConfig, RenderConfig& renderConfig) {
     auto names = GetPresetNames();
     if (names.empty()) return false;
@@ -174,6 +260,12 @@ bool PresetManager::LoadPreviousPreset(SimulationConfig& simConfig, RenderConfig
     return LoadPreset(*it, simConfig, renderConfig);
 }
 
+/**
+ * @brief Prints all available presets to the log with descriptions
+ * 
+ * Outputs a formatted list of all presets showing their names, descriptions,
+ * and marking the currently active preset for easy identification.
+ */
 void PresetManager::PrintAvailablePresets() const {
     LOG_INFO("Available presets:");
     for (const auto& pair : presets) {

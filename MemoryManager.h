@@ -1,3 +1,17 @@
+/**
+ * @file MemoryManager.h
+ * @brief Advanced memory management system for high-performance applications
+ * 
+ * This header provides comprehensive memory management solutions including:
+ * - Generic object pooling for reducing allocation overhead
+ * - GPU memory management and buffer pooling for DirectX 11
+ * - Memory profiling and usage tracking
+ * - Thread-safe operations for multi-threaded environments
+ * 
+ * The system is designed for real-time applications like particle simulation
+ * where efficient memory management is crucial for maintaining high frame rates.
+ */
+
 #pragma once
 
 #include <memory>
@@ -6,18 +20,43 @@
 #include <mutex>
 #include <type_traits>
 
-// Modern memory management system for high-performance scenarios
+// =====================================================================================
+// Generic Object Pool - High-performance object reuse system
+// =====================================================================================
 
+/**
+ * Generic object pool for reducing allocation/deallocation overhead
+ * 
+ * This template class provides efficient object reuse for expensive-to-create
+ * objects. It maintains a pool of pre-allocated objects that can be quickly
+ * acquired and returned, avoiding frequent heap allocations.
+ * 
+ * @tparam T The type of objects to pool
+ */
 template<typename T>
 class ObjectPool {
 private:
-    std::stack<std::unique_ptr<T>> pool;
-    std::mutex poolMutex;
-    size_t maxSize;
+    std::stack<std::unique_ptr<T>> pool;        // Pool of available objects
+    std::mutex poolMutex;                       // Thread-safe access
+    size_t maxSize;                             // Maximum pool size
 
 public:
+    /**
+     * Constructor
+     * @param maxSize Maximum number of objects to keep in pool
+     */
     explicit ObjectPool(size_t maxSize = 1000) : maxSize(maxSize) {}
     
+    /**
+     * Acquire an object from the pool or create a new one
+     * 
+     * If the pool contains available objects, reuses one. Otherwise,
+     * creates a new object. The returned object is ready for use.
+     * 
+     * @tparam Args Constructor argument types
+     * @param args Constructor arguments for new objects
+     * @return Unique pointer to the acquired object
+     */
     template<typename... Args>
     std::unique_ptr<T> acquire(Args&&... args) {
         std::lock_guard<std::mutex> lock(poolMutex);
@@ -25,7 +64,7 @@ public:
         if (!pool.empty()) {
             auto obj = std::move(pool.top());
             pool.pop();
-            // Reinitialize object if needed
+            // Reinitialize object with new parameters if supported
             if constexpr (std::is_constructible_v<T, Args...>) {
                 *obj = T(std::forward<Args>(args)...);
             }

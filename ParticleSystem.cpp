@@ -1,3 +1,21 @@
+/**
+ * @file ParticleSystem.cpp
+ * @brief Multi-type particle physics simulation system
+ * 
+ * This file implements a comprehensive GPU-accelerated particle physics system
+ * supporting multiple particle types with force-based interactions. Key features:
+ * 
+ * - Multi-type particles with distinct physical properties (mass, radius, charge)
+ * - Force-based interactions: spring, Lennard-Jones, electromagnetic, gravitational
+ * - GPU compute shader simulation for high-performance parallel processing
+ * - DirectX 11 buffer management for efficient GPU data transfer
+ * - Configurable particle distributions and initial conditions
+ * - Real-time parameter updates and simulation control
+ * 
+ * The system can simulate hundreds to thousands of particles in real-time
+ * while maintaining stable physics and interactive frame rates.
+ */
+
 #include "ParticleSystem.h"
 #include "Utilities.h"
 #include "Logger.h"
@@ -6,14 +24,25 @@
 #include <algorithm>
 #include <iostream>
 
+/**
+ * Constructor - Initialize particle system with device and configuration
+ * 
+ * Sets up the particle system with the specified number of particles and
+ * prepares data structures for multi-type simulation. The actual GPU
+ * buffers and compute resources are created during Initialize().
+ * 
+ * @param device         DirectX 11 device for GPU resource creation
+ * @param configManager  Configuration manager containing simulation parameters
+ */
 ParticleSystem::ParticleSystem(std::shared_ptr<D3DDevice> device, 
-                                                   std::shared_ptr<ConfigManager> configManager)
+                               std::shared_ptr<ConfigManager> configManager)
     : device(device), configManager(configManager) {
     
+    // Allocate particle storage based on configuration
     const auto& simConfig = configManager->GetSimulationConfig();
     particles.resize(simConfig.particleCount);
     
-    // Initialize particle types and interaction rule buffers
+    // Prepare particle type definitions and interaction rules for GPU upload
     InitializeTypeAndRuleData();
 }
 

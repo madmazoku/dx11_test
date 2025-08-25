@@ -1,8 +1,37 @@
+/**
+ * @file InteractiveCamera.cpp
+ * @brief Implementation of the InteractiveCamera class for user-controlled camera system
+ * 
+ * The InteractiveCamera provides a comprehensive camera system with smooth user
+ * interactions, automatic particle tracking, and configurable view controls. It
+ * supports mouse-based rotation, zoom controls, and automatic centering on particle
+ * clusters for optimal viewing experience.
+ * 
+ * Key features:
+ * - Smooth mouse-controlled camera rotation with momentum
+ * - Mouse wheel and keyboard-based zoom controls with easing
+ * - Automatic particle center tracking and camera centering
+ * - Configurable zoom limits and sensitivity settings
+ * - Smooth interpolation for all camera movements
+ * - Multiple zoom preset levels (10%-90%) via keyboard shortcuts
+ * - Real-time view and projection matrix generation
+ * 
+ * The camera system is designed to provide intuitive controls for exploring
+ * 3D particle simulations while maintaining smooth, responsive interaction.
+ * 
+ * @author DirectX 11 Particle System
+ * @date 2024
+ */
+
 #include "InteractiveCamera.h"
 #include "Logger.h"
 #include <algorithm>
 #include <cmath>
 
+/**
+ * @brief Constructs an InteractiveCamera with the specified render configuration
+ * @param config Render configuration containing camera parameters and limits
+ */
 InteractiveCamera::InteractiveCamera(const RenderConfig& config) : config(config) {
     // Initialize camera state
     state.target = { 0.0f, 0.0f, 0.0f };

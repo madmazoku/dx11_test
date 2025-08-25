@@ -1,11 +1,43 @@
+/**
+ * @file Profiler.cpp
+ * @brief Implementation of the Profiler class for performance monitoring and analysis
+ * 
+ * The Profiler provides comprehensive performance monitoring capabilities for the
+ * particle simulation system. It tracks execution times for different subsystems,
+ * maintains statistical data, and provides detailed performance reports for
+ * optimization and debugging purposes.
+ * 
+ * Key features:
+ * - High-precision timing using std::chrono for accurate measurements
+ * - Thread-safe singleton pattern for global profiling access
+ * - Statistical analysis including min/max/average execution times
+ * - Hierarchical profiling with nested timing blocks
+ * - Configurable profiling enable/disable for production builds
+ * - Detailed performance reports with formatted output
+ * - Memory-efficient storage of timing data
+ * 
+ * The profiling system is essential for identifying performance bottlenecks
+ * and optimizing the particle simulation for real-time performance.
+ * 
+ * @author DirectX 11 Particle System
+ * @date 2024
+ */
+
 #include "Profiler.h"
 #include "Logger.h"
 #include <iostream>
 #include <iomanip>
 
+// Static member initialization for singleton pattern
 std::unique_ptr<Profiler> Profiler::instance = nullptr;
 std::once_flag Profiler::initFlag;
 
+/**
+ * @brief Private constructor for singleton Profiler instance
+ * 
+ * Initializes the profiler with default settings (profiling enabled).
+ * Private constructor ensures singleton pattern enforcement.
+ */
 Profiler::Profiler() : enabled(true) {
 }
 

@@ -1,10 +1,41 @@
+/**
+ * @file Logger.cpp
+ * @brief Implementation of the Logger class for comprehensive application logging
+ * 
+ * The Logger provides a thread-safe, singleton logging system with multiple severity
+ * levels, formatted output, and flexible destination support. It handles all logging
+ * needs for the particle simulation system including performance metrics, debugging
+ * information, warnings, and error reporting.
+ * 
+ * Key features:
+ * - Thread-safe singleton pattern with std::once_flag initialization
+ * - Multiple log levels (Debug, Info, Warning, Error) with filtering
+ * - High-precision timestamps with microsecond accuracy
+ * - Formatted output with consistent message structure
+ * - Console and file output support (extensible design)
+ * - Macro-based logging interface for performance and convenience
+ * 
+ * The logging system is essential for debugging, performance analysis, and
+ * runtime monitoring of the particle simulation system.
+ * 
+ * @author DirectX 11 Particle System
+ * @date 2024
+ */
+
 #include "Logger.h"
 #include <iomanip>
 #include <chrono>
 
+// Static member initialization for singleton pattern
 std::unique_ptr<Logger> Logger::instance = nullptr;
 std::once_flag Logger::initFlag;
 
+/**
+ * @brief Private constructor for singleton Logger instance
+ * 
+ * Initializes the logger with default settings (Info level, console output enabled).
+ * Private constructor ensures singleton pattern enforcement.
+ */
 Logger::Logger() : currentLevel(LogLevel::Info), consoleOutput(true) {
 }
 

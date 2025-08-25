@@ -1,16 +1,52 @@
+/**
+ * @file ShaderManager.cpp
+ * @brief DirectX 11 HLSL shader management system
+ * 
+ * This file implements comprehensive shader loading, compilation, and management
+ * for the particle simulation system. It provides:
+ * 
+ * - Runtime HLSL shader compilation from source files
+ * - Shader resource management and caching
+ * - Support for compute, vertex, geometry, and pixel shaders
+ * - Error handling and diagnostic reporting
+ * - Particle buffer management for compute shaders
+ * - Shader parameter binding and resource setup
+ * 
+ * The system compiles shaders at runtime to support development iteration
+ * and provides detailed error reporting for debugging shader issues.
+ */
+
 #include "ShaderManager.h"
 #include "Utilities.h"
 #include <iostream>
 #include <fstream>
 
+/**
+ * Constructor - Initialize shader manager with DirectX device
+ * @param device DirectX 11 device for shader creation and resource management
+ */
 ShaderManager::ShaderManager(std::shared_ptr<D3DDevice> device) : device(device) {}
 
+/**
+ * Load all shaders from precompiled binary files
+ * 
+ * This method loads shaders from compiled .cso files which are faster to load
+ * than compiling from source. Typically used for release builds.
+ * 
+ * @param shaderDirectory Directory containing compiled shader files
+ * @return true if all shaders loaded successfully, false otherwise
+ */
 bool ShaderManager::LoadAllShaders(const std::filesystem::path& shaderDirectory) {
     try {
+        // Load particle physics compute shader
         LoadShader("compute", shaderDirectory / "ComputeShader.cso", ShaderType::Compute);
+        // Load frustum culling optimization shader
         LoadShader("FrustumCulling", shaderDirectory / "FrustumCullingShader.cso", ShaderType::Compute);
+        // Load vertex processing shader
         LoadShader("vertex", shaderDirectory / "VertexShader.vso", ShaderType::Vertex);
+        // Load icosphere geometry generation shader
         LoadShader("geometry", shaderDirectory / "GeometryShader.gso", ShaderType::Geometry);
+        // Load Phong lighting pixel shader
         LoadShader("pixel", shaderDirectory / "PixelShader.pso", ShaderType::Pixel);
         return true;
     }
@@ -20,6 +56,14 @@ bool ShaderManager::LoadAllShaders(const std::filesystem::path& shaderDirectory)
     }
 }
 
+/**
+ * Load and compile a shader from binary file
+ * 
+ * @param name     Unique name for the shader (used for later retrieval)
+ * @param filePath Path to the compiled shader file (.cso)
+ * @param type     Type of shader (compute, vertex, geometry, pixel)
+ * @return true if shader loaded successfully, false otherwise
+ */
 bool ShaderManager::LoadShader(const std::string& name, const std::filesystem::path& filePath, ShaderType type) {
     try {
         std::cout << "Loading shader: " << filePath << std::endl;

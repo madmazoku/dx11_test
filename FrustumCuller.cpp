@@ -1,3 +1,28 @@
+/**
+ * @file FrustumCuller.cpp
+ * @brief Implementation of the FrustumCuller class for GPU-accelerated frustum culling
+ * 
+ * The FrustumCuller provides high-performance GPU-based frustum culling for particle
+ * systems using DirectX 11 compute shaders. It efficiently eliminates particles that
+ * are outside the camera's view frustum, reducing rendering workload and improving
+ * performance for large particle counts.
+ * 
+ * Key features:
+ * - GPU-accelerated frustum culling using compute shaders
+ * - Distance-based culling with configurable LOD (Level of Detail) system
+ * - Real-time frustum plane calculation from view/projection matrices
+ * - Performance statistics tracking (visible/culled counts, execution time)
+ * - Structured buffer management for particle data and culling results
+ * - Thread-safe operations with proper synchronization
+ * 
+ * The system uses a compute shader to perform parallel culling tests on all
+ * particles simultaneously, providing significant performance improvements over
+ * CPU-based culling approaches.
+ * 
+ * @author DirectX 11 Particle System
+ * @date 2024
+ */
+
 #include "FrustumCuller.h"
 #include "Utilities.h"
 #include "Logger.h"
@@ -6,6 +31,11 @@
 
 using namespace DirectX;
 
+/**
+ * @brief Constructs a FrustumCuller with required DirectX dependencies
+ * @param device DirectX device wrapper for GPU operations
+ * @param shaderManager Shader manager for compute shader access
+ */
 FrustumCuller::FrustumCuller(std::shared_ptr<D3DDevice> device, 
                              std::shared_ptr<ShaderManager> shaderManager)
     : device(device), shaderManager(shaderManager) {
