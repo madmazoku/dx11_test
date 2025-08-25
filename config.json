@@ -1,48 +1,268 @@
 {
     "simulation": {
-        "particleCount": 256,
+        "particleCount": 512,
         "timeStep": 0.016,
-        "gravity": [0.0, -9.81, 0.0],
-        "damping": 0.995,
-        "springConstant": 100.0,
-        "restLength": 0.3,
-        "boundaryMin": [-8.0, -8.0, -8.0],
-        "boundaryMax": [8.0, 8.0, 8.0],
         "maxFrames": 0,
         "enableDebugOutput": true,
-        "debugOutputInterval": 60
+        "debugOutputInterval": 60,
+        "maxInteractionsPerParticle": 50,
+        "spatialGridSize": 2.0,
+        "enableSpatialOptimization": true,
+        "enableMultiThreading": true,
+        "globalDamping": 0.01,
+        "boundaryMin": [-10.0, -10.0, -10.0],
+        "boundaryMax": [10.0, 10.0, 10.0],
+        "boundaryRestitution": 0.8
     },
+    "particleTypes": [
+        {
+            "id": 0,
+            "name": "Water",
+            "mass": 1.0,
+            "radius": 0.1,
+            "charge": 0.0,
+            "material": {
+                "diffuseColor": [0.2, 0.6, 1.0],
+                "specularColor": [1.0, 1.0, 1.0],
+                "shininess": 64.0,
+                "metallic": 0.0,
+                "roughness": 0.1,
+                "reflectance": 0.04,
+                "emissive": 0.0,
+                "emissiveColor": [0.0, 0.0, 0.0]
+            },
+            "lodLevels": 2
+        },
+        {
+            "id": 1,
+            "name": "Oil",
+            "mass": 0.8,
+            "radius": 0.12,
+            "charge": 0.0,
+            "material": {
+                "diffuseColor": [0.8, 0.7, 0.2],
+                "specularColor": [1.0, 1.0, 0.8],
+                "shininess": 32.0,
+                "metallic": 0.0,
+                "roughness": 0.3,
+                "reflectance": 0.04,
+                "emissive": 0.0,
+                "emissiveColor": [0.0, 0.0, 0.0]
+            },
+            "lodLevels": 2
+        },
+        {
+            "id": 2,
+            "name": "Sand",
+            "mass": 2.5,
+            "radius": 0.08,
+            "charge": 0.0,
+            "material": {
+                "diffuseColor": [0.8, 0.7, 0.5],
+                "specularColor": [0.2, 0.2, 0.2],
+                "shininess": 8.0,
+                "metallic": 0.0,
+                "roughness": 0.9,
+                "reflectance": 0.02,
+                "emissive": 0.0,
+                "emissiveColor": [0.0, 0.0, 0.0]
+            },
+            "lodLevels": 1
+        },
+        {
+            "id": 3,
+            "name": "Plasma",
+            "mass": 0.1,
+            "radius": 0.15,
+            "charge": 1.0,
+            "material": {
+                "diffuseColor": [1.0, 0.3, 1.0],
+                "specularColor": [1.0, 0.8, 1.0],
+                "shininess": 32.0,
+                "metallic": 0.0,
+                "roughness": 0.0,
+                "reflectance": 0.1,
+                "emissive": 0.8,
+                "emissiveColor": [0.8, 0.2, 0.8]
+            },
+            "lodLevels": 3
+        }
+    ],
+    "interactionRules": [
+        {
+            "typeA": 0,
+            "typeB": 0,
+            "enabled": true,
+            "forces": [
+                {
+                    "type": "LennardJones",
+                    "strength": 1.0,
+                    "range": 0.5,
+                    "parameters": [0.1, 0.2]
+                },
+                {
+                    "type": "Viscous",
+                    "strength": 0.5,
+                    "range": 1.0,
+                    "parameters": [0.01, 0.1]
+                }
+            ],
+            "globalStrengthMultiplier": 1.0,
+            "maxInteractionRange": 1.0
+        },
+        {
+            "typeA": 0,
+            "typeB": 1,
+            "enabled": true,
+            "forces": [
+                {
+                    "type": "LennardJones",
+                    "strength": 0.5,
+                    "range": 0.6,
+                    "parameters": [0.05, 0.22]
+                }
+            ],
+            "globalStrengthMultiplier": 0.8,
+            "maxInteractionRange": 1.2
+        },
+        {
+            "typeA": 2,
+            "typeB": 2,
+            "enabled": true,
+            "forces": [
+                {
+                    "type": "Spring",
+                    "strength": 2.0,
+                    "range": 0.3,
+                    "parameters": [10.0, 0.5, 0.16]
+                }
+            ],
+            "globalStrengthMultiplier": 1.0,
+            "maxInteractionRange": 0.5
+        },
+        {
+            "typeA": 3,
+            "typeB": 3,
+            "enabled": true,
+            "forces": [
+                {
+                    "type": "Electromagnetic",
+                    "strength": 1.0,
+                    "range": 3.0,
+                    "parameters": [8.99e9]
+                }
+            ],
+            "globalStrengthMultiplier": 1.0,
+            "maxInteractionRange": 5.0
+        }
+    ],
+    "environmentalForces": [
+        {
+            "targetTypeId": 4294967295,
+            "force": {
+                "type": "ConstantField",
+                "strength": 1.0,
+                "range": 1000.0,
+                "parameters": [0.0, -9.81, 0.0, 1.0]
+            },
+            "enabled": true
+        },
+        {
+            "targetTypeId": 0,
+            "force": {
+                "type": "Viscous",
+                "strength": 0.02,
+                "range": 1000.0,
+                "parameters": [0.001, 0.5]
+            },
+            "enabled": true
+        }
+    ],
+    "typeDistribution": [
+        {
+            "typeId": 0,
+            "percentage": 0.4,
+            "spawnCenter": [-2.0, 2.0, -2.0],
+            "spawnRadius": 3.0,
+            "initialVelocity": [0.5, 0.0, 0.5],
+            "massVariation": 0.1,
+            "radiusVariation": 0.05
+        },
+        {
+            "typeId": 1,
+            "percentage": 0.3,
+            "spawnCenter": [2.0, 2.0, 2.0],
+            "spawnRadius": 2.5,
+            "initialVelocity": [-0.3, 0.0, -0.3],
+            "massVariation": 0.05,
+            "radiusVariation": 0.1
+        },
+        {
+            "typeId": 2,
+            "percentage": 0.2,
+            "spawnCenter": [0.0, -2.0, 0.0],
+            "spawnRadius": 2.0,
+            "initialVelocity": [0.0, 1.0, 0.0],
+            "massVariation": 0.2,
+            "radiusVariation": 0.15
+        },
+        {
+            "typeId": 3,
+            "percentage": 0.1,
+            "spawnCenter": [0.0, 4.0, 0.0],
+            "spawnRadius": 1.0,
+            "initialVelocity": [0.0, -0.5, 0.0],
+            "massVariation": 0.5,
+            "radiusVariation": 0.2
+        }
+    ],
     "rendering": {
         "windowWidth": 1440,
         "windowHeight": 900,
         "enableVSync": true,
-        "clearColor": [0.05, 0.05, 0.15, 1.0],
-        "sphereRadius": 0.08,
+        "clearColor": [0.02, 0.02, 0.1, 1.0],
         "camera": {
-            "radius": 15.0,
-            "height": 3.0,
-            "rotationSpeed": 0.8,
-            "fov": 50.0,
+            "radius": 20.0,
+            "height": 5.0,
+            "rotationSpeed": 0.6,
+            "fov": 45.0,
             "nearPlane": 0.1,
             "farPlane": 200.0,
             "enableInteractive": true,
-            "zoomMin": 0.05,
-            "zoomMax": 1.0,
-            "zoomStep": 0.03,
-            "rotationSensitivity": 0.008,
+            "zoomMin": 0.1,
+            "zoomMax": 2.0,
+            "zoomStep": 0.05,
+            "rotationSensitivity": 0.01,
             "enableAutoCentering": true
         },
         "lighting": {
-            "direction": [-0.5, -0.8, -0.6],
-            "intensity": 1.2,
-            "color": [1.0, 0.95, 0.9],
-            "ambientIntensity": 0.3,
-            "specularPower": 64.0
+            "direction": [-0.4, -0.8, -0.4],
+            "intensity": 1.5,
+            "color": [1.0, 0.98, 0.95],
+            "ambientIntensity": 0.25,
+            "specularPower": 128.0
+        },
+        "culling": {
+            "enableFrustumCulling": true,
+            "maxRenderDistance": 120.0,
+            "lodDistance1": 15.0,
+            "lodDistance2": 35.0,
+            "lodDistance3": 70.0,
+            "enableLOD": true,
+            "enableBackfaceCulling": true,
+            "enableDistanceCulling": true,
+            "globalScale": 1.0,
+            "minParticleRadius": 0.05,
+            "maxParticleRadius": 0.25
+        },
+        "icosphere": {
+            "maxSubdivisions": 3,
+            "enableAdaptiveLOD": true,
+            "lodDistance0": 15.0,
+            "lodDistance1": 35.0,
+            "lodDistance2": 70.0,
+            "enableFlatShading": false,
+            "enableWireframe": false
         }
-    },
-    "performance": {
-        "enableProfiling": true,
-        "logFrameTime": false,
-        "targetFPS": 60.0
     }
 }

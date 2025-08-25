@@ -1,34 +1,57 @@
 #include "Application.h"
 #include "Logger.h"
+#include "MemoryManager.h"
+#include "ErrorHandling.h"
 #include <iostream>
-#include <filesystem>
+#include <exception>
 
-int main() {
-    // Initialize logger first
-    Logger::GetInstance().Initialize("particle_simulation.log", LogLevel::Info, true);
+#ifdef _DEBUG
+#include <crtdbg.h>
+#endif
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    UNREFERENCED_PARAMETER(hInstance);
+    UNREFERENCED_PARAMETER(hPrevInstance);
+    UNREFERENCED_PARAMETER(lpCmdLine);
+    UNREFERENCED_PARAMETER(nCmdShow);
+
+#ifdef _DEBUG
+    // Enable run-time memory check for debug builds
+    _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+#endif
+
+    // Initialize memory manager
+    MemoryManager::GetInstance().Initialize();
     
-    LOG_INFO("=== Particle Physics Simulation - Verlet Integration ===");
-    LOG_INFO("Working directory: {}", std::filesystem::current_path().string());
-
+    // Initialize error handling
+    ErrorHandling::Initialize();
+    
     try {
-        Application app;
+        // Create and initialize clean multi-type particle application
+        auto app = std::make_unique<Application>();
         
-        if (!app.Initialize()) {
-            LOG_ERROR("Failed to initialize application");
-            return 1;
+        if (!app->Initialize()) {
+            LOG_ERROR("Failed to initialize multi-type particle simulation");
+            return -1;
         }
         
-        app.Run();
+        // Run main application loop
+        app->Run();
         
-        LOG_INFO("Application finished successfully");
+        // Clean shutdown
+        app->Shutdown();
+        
+        LOG_INFO("Multi-type particle simulation completed successfully");
         return 0;
     }
     catch (const std::exception& e) {
-        LOG_CRITICAL("Unhandled exception: {}", e.what());
-        return 1;
+        LOG_ERROR("Unhandled exception in main: {}", e.what());
+        std::cerr << "Fatal error: " << e.what() << std::endl;
+        return -1;
     }
     catch (...) {
-        LOG_CRITICAL("Unknown exception occurred");
-        return 1;
+        LOG_ERROR("Unknown unhandled exception in main");
+        std::cerr << "Fatal error: Unknown exception" << std::endl;
+        return -1;
     }
 }

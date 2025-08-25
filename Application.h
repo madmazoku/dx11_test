@@ -1,65 +1,76 @@
 #pragma once
 
-#include "D3DDevice.h"
-#include "ShaderManager.h"
-#include "ParticleSystem.h" 
-#include "Renderer.h"
-#include "InteractiveCamera.h"
-#include "StatsOverlay.h"
-#include "PresetManager.h"
-#include "Structures.h"
-#include <Windows.h>
+#include <windows.h>
+#include <windowsx.h>
 #include <memory>
 #include <chrono>
+#include "D3DDevice.h"
+#include "ShaderManager.h"
+#include "ParticleSystem.h"
+#include "Renderer.h"
+#include "InteractiveCamera.h"
+#include "ConfigManager.h"
+#include "Structures.h"
+
+// Forward declarations
+class StatsOverlay;
+class PresetManager;
 
 class Application {
 private:
-    HWND hWnd = nullptr;
-    
+    // Core subsystems
     std::shared_ptr<D3DDevice> device;
     std::shared_ptr<ShaderManager> shaderManager;
     std::shared_ptr<ParticleSystem> particleSystem;
     std::shared_ptr<Renderer> renderer;
-    std::shared_ptr<InteractiveCamera> camera;
-    std::shared_ptr<StatsOverlay> statsOverlay;
-    std::shared_ptr<PresetManager> presetManager;
+    std::shared_ptr<InteractiveCamera> interactiveCamera;
+    std::shared_ptr<ConfigManager> configManager;
     
-    SimulationConfig simulationConfig;
-    RenderConfig renderConfig;
+    // Optional systems
+    std::unique_ptr<StatsOverlay> statsOverlay;
+    std::unique_ptr<PresetManager> presetManager;
     
-    bool running = true;
+    // Window and timing
+    HWND hWnd = nullptr;
     std::chrono::high_resolution_clock::time_point lastFrameTime;
-    float totalTime = 0.0f;
+    float accumulatedTime = 0.0f;
+    float fps = 0.0f;
     int frameCount = 0;
+    int totalFrames = 0;
+    
+    // Application state
+    bool isPaused = false;
+    bool showStatsOverlay = true;
+    
+    // Helper methods
+    bool CreateWindow();
+    bool InitializeSubsystems();
+    bool LoadMultiTypeShaders();
+    void Update();
+    void Render();
+    void UpdateWindowTitle();
+    void HandleKeyInput(unsigned int key);
+    
+    // Window procedure
+    static LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+    LRESULT HandleWindowMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
 
 public:
     Application();
     ~Application();
-
+    
+    // Application lifecycle
     bool Initialize();
     void Run();
     void Shutdown();
-
-private:
-    bool CreateWindow();
-    bool InitializeSubsystems();
-    void GameLoop();
-    void Update(float deltaTime);
-    void Render(float deltaTime);
-    void ProcessMessages();
     
-    // Window event handling
-    static LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
-    LRESULT HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+    // Accessors
+    HWND GetWindowHandle() const { return hWnd; }
+    float GetFPS() const { return fps; }
+    bool IsPaused() const { return isPaused; }
     
-    void OnKeyDown(WPARAM key);
-    void OnResize(int width, int height);
-    void OnMouseMove(int x, int y);
-    void OnMouseDown(int x, int y, bool leftButton, bool rightButton);
-    void OnMouseUp(int x, int y, bool leftButton, bool rightButton);
-    void OnMouseWheel(int delta);
-    
-    void LoadConfiguration();
-    void ShowDebugInfo();
-    void ApplyNewConfiguration();
+    // Configuration
+    std::shared_ptr<ConfigManager> GetConfigManager() const { return configManager; }
+    std::shared_ptr<ParticleSystem> GetParticleSystem() const { return particleSystem; }
+    std::shared_ptr<Renderer> GetRenderer() const { return renderer; }
 };

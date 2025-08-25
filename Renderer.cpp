@@ -9,23 +9,59 @@ using namespace DirectX;
 
 Renderer::Renderer(std::shared_ptr<D3DDevice> device, 
                    std::shared_ptr<ShaderManager> shaderManager,
-                   const RenderConfig& config)
-    : device(device), shaderManager(shaderManager), config(config) {
-    cameraPosition = { 0.0f, config.cameraHeight, config.cameraRadius };
+                   std::shared_ptr<ConfigManager> configManager)
+    : device(device), shaderManager(shaderManager), configManager(configManager) {
+    
+    // Get configuration
+    const auto& renderConfig = configManager->GetRenderConfig();
+    const auto& env = configManager->GetEnvironment();
+    
+    cameraPosition = { 0.0f, renderConfig.cameraHeight, renderConfig.cameraRadius };
+    
+    // Initialize material buffer array
+    materials.clear();
+    for (const auto& particleType : configManager->GetParticleTypes()) {
+        materials.push_back(particleType.material);
+    }
 }
 
 bool Renderer::Initialize() {
+    return InitializeWithMaxParticles(100000); // Default max particles
+}
+
+bool Renderer::InitializeWithMaxParticles(size_t maxParticles) {
     PROFILE_FUNCTION();
     
     try {
         if (!CreateConstantBuffers()) return false;
         if (!CreateRenderStates()) return false;
+        if (!CreateMaterialBuffer()) return false;
         
-        LOG_INFO("Renderer initialized successfully");
+        // Initialize frustum culler with multi-type support
+        frustumCuller = std::make_unique<FrustumCuller>(device, shaderManager);
+        if (!frustumCuller->Initialize(maxParticles)) {
+            LOG_WARNING("Failed to initialize frustum culler - continuing without culling");
+            frustumCuller.reset();
+            enableFrustumCulling = false;
+        } else {
+            const auto& cullingConfig = configManager->GetCullingConfig();
+            frustumCuller->SetMaxRenderDistance(cullingConfig.maxRenderDistance);
+            frustumCuller->SetLODDistances(cullingConfig.lodDistance1, 
+                                         cullingConfig.lodDistance2, 
+                                         cullingConfig.lodDistance3);
+            frustumCuller->EnableLOD(cullingConfig.enableLOD);
+            frustumCuller->EnableBackfaceCulling(cullingConfig.enableBackfaceCulling);
+            frustumCuller->EnableDistanceCulling(cullingConfig.enableDistanceCulling);
+            enableFrustumCulling = cullingConfig.enableFrustumCulling;
+        }
+        
+        LOG_INFO("Multi-type renderer initialized successfully with {} particle types, frustum culling {}", 
+                configManager->GetParticleTypeCount(),
+                frustumCuller ? "enabled" : "disabled");
         return true;
     }
     catch (const std::exception& e) {
-        LOG_ERROR("Renderer initialization failed: {}", e.what());
+        LOG_ERROR("Multi-type renderer initialization failed: {}", e.what());
         return false;
     }
 }
@@ -52,13 +88,53 @@ bool Renderer::CreateConstantBuffers() {
         "Failed to create light constant buffer"
     );
 
-    // Create simulation constants buffer for compute shader
+    // Create simulation constants buffer for multi-type compute shader
     bufferDesc.ByteWidth = sizeof(SimulationConstants);
     THROW_IF_FAILED(
         d3dDevice->CreateBuffer(&bufferDesc, nullptr, simulationConstantsBuffer.getAddressOf()),
         "Failed to create simulation constants buffer"
     );
 
+    return true;
+}
+
+bool Renderer::CreateMaterialBuffer() {
+    auto d3dDevice = device->GetDevice();
+    
+    if (materials.empty()) {
+        LOG_ERROR("No materials loaded from configuration");
+        return false;
+    }
+    
+    // Create structured buffer for materials
+    D3D11_BUFFER_DESC bufferDesc = {};
+    bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    bufferDesc.ByteWidth = sizeof(MaterialProperties) * materials.size();
+    bufferDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    bufferDesc.StructureByteStride = sizeof(MaterialProperties);
+    bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+
+    D3D11_SUBRESOURCE_DATA initData = {};
+    initData.pSysMem = materials.data();
+
+    THROW_IF_FAILED(
+        d3dDevice->CreateBuffer(&bufferDesc, &initData, materialBuffer.getAddressOf()),
+        "Failed to create material buffer"
+    );
+
+    // Create shader resource view
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+    srvDesc.Buffer.FirstElement = 0;
+    srvDesc.Buffer.NumElements = materials.size();
+
+    THROW_IF_FAILED(
+        d3dDevice->CreateShaderResourceView(materialBuffer.get(), &srvDesc, materialBufferSRV.getAddressOf()),
+        "Failed to create material buffer SRV"
+    );
+
+    LOG_INFO("Created material buffer with {} materials", materials.size());
     return true;
 }
 
@@ -95,11 +171,11 @@ bool Renderer::CreateRenderStates() {
         "Failed to create depth stencil state"
     );
 
-    // Create blend state for transparency (optional)
+    // Create blend state for transparent particles
     D3D11_BLEND_DESC blendDesc = {};
     blendDesc.AlphaToCoverageEnable = false;
     blendDesc.IndependentBlendEnable = false;
-    blendDesc.RenderTarget[0].BlendEnable = false;
+    blendDesc.RenderTarget[0].BlendEnable = true;
     blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
     blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
@@ -116,310 +192,236 @@ bool Renderer::CreateRenderStates() {
     return true;
 }
 
-void Renderer::RenderFrame(const ParticleSystem& particleSystem, float deltaTime) {
-    PROFILE_SCOPE("RenderFrame");
+void Renderer::UpdateSimulationConstants(const std::vector<Particle>& particles) {
+    PROFILE_FUNCTION();
     
     auto context = device->GetContext();
-    
-    // Run compute shader first
-    {
-        PROFILE_SCOPE("Compute Shader");
-        RunComputeShader(particleSystem);
-    }
-    
-    // Update constant buffers
-    {
-        PROFILE_SCOPE("Update Buffers");
-        UpdateTransformBuffer(deltaTime);
-        UpdateLightBuffer();
-        UpdateSimulationConstantsBuffer(particleSystem);
-    }
-
-    // Render particles
-    {
-        PROFILE_SCOPE("Draw Particles");
-        
-        // Set shaders
-        context->VSSetShader(shaderManager->GetVertexShader("vertex"), nullptr, 0);
-        context->GSSetShader(shaderManager->GetGeometryShader("geometry"), nullptr, 0);
-        context->PSSetShader(shaderManager->GetPixelShader("pixel"), nullptr, 0);
-
-        // Set constant buffers
-        ID3D11Buffer* vsBuffers[] = { transformBuffer.get() };
-        ID3D11Buffer* gsBuffers[] = { transformBuffer.get() };
-        ID3D11Buffer* psBuffers[] = { lightBuffer.get() };
-        
-        context->VSSetConstantBuffers(0, 1, vsBuffers);
-        context->GSSetConstantBuffers(0, 1, gsBuffers);
-        context->PSSetConstantBuffers(0, 1, psBuffers);
-
-        // Set shader resources - get the updated buffer from compute shader
-        ID3D11ShaderResourceView* srvs[] = { particleSystem.GetCurrentSRV() };
-        context->VSSetShaderResources(0, 1, srvs);
-
-        // Set render states
-        context->RSSetState(rasterizerState.get());
-        context->OMSetDepthStencilState(depthStencilState.get(), 1);
-        float blendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-    context->OMSetBlendState(blendState.get(), blendFactor, 0xffffffff);
-
-    // Set primitive topology
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
-
-    // Dispatch compute shader for physics
-    auto computeShader = shaderManager->GetComputeShader("compute");
-    if (computeShader) {
-        context->CSSetShader(computeShader, nullptr, 0);
-        
-        ID3D11ShaderResourceView* csSRVs[] = { particleSystem.GetCurrentSRV() };
-        ID3D11UnorderedAccessView* csUAVs[] = { particleSystem.GetNextUAV() };
-        
-        context->CSSetShaderResources(0, 1, csSRVs);
-        context->CSSetUnorderedAccessViews(0, 1, csUAVs, nullptr);
-        
-        // Dispatch compute shader
-        UINT numGroups = (Utils::SafeSizeTToUINT(particleSystem.GetParticleCount()) + 63) / 64;
-        context->Dispatch(numGroups, 1, 1);
-        
-        // Unset compute shader resources
-        ID3D11ShaderResourceView* nullSRV = nullptr;
-        ID3D11UnorderedAccessView* nullUAV = nullptr;
-        context->CSSetShaderResources(0, 1, &nullSRV);
-        context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
-        context->CSSetShader(nullptr, nullptr, 0);
-    }
-
-    // Draw particles (will be expanded to spheres by geometry shader)
-    context->Draw(Utils::SafeSizeTToUINT(particleSystem.GetParticleCount()), 0);
-
-    // Unset resources
-    ID3D11ShaderResourceView* nullSRV = nullptr;
-    context->VSSetShaderResources(0, 1, &nullSRV);
-    context->VSSetShader(nullptr, nullptr, 0);
-    context->GSSetShader(nullptr, nullptr, 0);
-    context->PSSetShader(nullptr, nullptr, 0);
-}
-
-void Renderer::RenderFrameWithCamera(const ParticleSystem& particleSystem, 
-                                    const InteractiveCamera& camera, float deltaTime) {
-    PROFILE_SCOPE("RenderFrameWithCamera");
-    
-    auto context = device->GetContext();
-    
-    // Run compute shader first
-    {
-        PROFILE_SCOPE("Compute Shader");
-        RunComputeShader(particleSystem);
-    }
-    
-    // Update constant buffers with camera data
-    {
-        PROFILE_SCOPE("Update Buffers");
-        UpdateTransformBufferWithCamera(camera, deltaTime);
-        UpdateLightBufferWithCamera(camera);
-        UpdateSimulationConstantsBuffer(particleSystem);
-    }
-
-    // Render particles
-    {
-        PROFILE_SCOPE("Draw Particles");
-        
-        // Set shaders
-        context->VSSetShader(shaderManager->GetVertexShader("vertex"), nullptr, 0);
-        context->GSSetShader(shaderManager->GetGeometryShader("geometry"), nullptr, 0);
-        context->PSSetShader(shaderManager->GetPixelShader("pixel"), nullptr, 0);
-
-        // Set constant buffers
-        ID3D11Buffer* vsBuffers[] = { transformBuffer.get() };
-        ID3D11Buffer* gsBuffers[] = { transformBuffer.get() };
-        ID3D11Buffer* psBuffers[] = { lightBuffer.get() };
-        
-        context->VSSetConstantBuffers(0, 1, vsBuffers);
-        context->GSSetConstantBuffers(0, 1, gsBuffers);
-        context->PSSetConstantBuffers(0, 1, psBuffers);
-
-        // Set shader resources
-        ID3D11ShaderResourceView* srvs[] = { particleSystem.GetCurrentSRV() };
-        context->VSSetShaderResources(0, 1, srvs);
-
-        // Set render states
-        context->RSSetState(rasterizerState.get());
-        context->OMSetDepthStencilState(depthStencilState.get(), 1);
-        float blendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-        context->OMSetBlendState(blendState.get(), blendFactor, 0xffffffff);
-
-        // Set primitive topology
-        context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
-
-        // Draw particles
-        context->Draw(Utils::SafeSizeTToUINT(particleSystem.GetParticleCount()), 0);
-
-        // Unset resources
-        ID3D11ShaderResourceView* nullSRV = nullptr;
-        context->VSSetShaderResources(0, 1, &nullSRV);
-        context->VSSetShader(nullptr, nullptr, 0);
-        context->GSSetShader(nullptr, nullptr, 0);
-        context->PSSetShader(nullptr, nullptr, 0);
-    }
-}
-
-void Renderer::UpdateTransformBuffer(float time) {
-    UpdateCameraPosition(time);
-    
-    XMMATRIX worldMatrix = XMMatrixIdentity();
-    XMMATRIX viewMatrix = CreateViewMatrix();
-    XMMATRIX projMatrix = CreateProjectionMatrix();
-    XMMATRIX viewProjMatrix = XMMatrixMultiply(viewMatrix, projMatrix);
+    const auto& env = configManager->GetEnvironment();
+    const auto& simConfig = configManager->GetSimulationConfig();
 
     D3D11_MAPPED_SUBRESOURCE mappedResource;
     THROW_IF_FAILED(
-        device->GetContext()->Map(transformBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource),
-        "Failed to map transform buffer"
-    );
-
-    TransformBuffer* transformData = static_cast<TransformBuffer*>(mappedResource.pData);
-    transformData->viewProjectionMatrix = XMMatrixTranspose(viewProjMatrix);
-    transformData->worldMatrix = XMMatrixTranspose(worldMatrix);
-    transformData->cameraPos = cameraPosition;
-    transformData->sphereRadius = config.sphereRadius;
-
-    device->GetContext()->Unmap(transformBuffer.get(), 0);
-}
-
-void Renderer::UpdateTransformBufferWithCamera(const InteractiveCamera& camera, float time) {
-    XMMATRIX worldMatrix = XMMatrixIdentity();
-    
-    float aspectRatio = static_cast<float>(config.windowWidth) / static_cast<float>(config.windowHeight);
-    XMMATRIX viewMatrix = camera.GetViewMatrix();
-    XMMATRIX projMatrix = camera.GetProjectionMatrix(aspectRatio);
-    XMMATRIX viewProjMatrix = XMMatrixMultiply(viewMatrix, projMatrix);
-
-    D3D11_MAPPED_SUBRESOURCE mappedResource;
-    THROW_IF_FAILED(
-        device->GetContext()->Map(transformBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource),
-        "Failed to map transform buffer"
-    );
-
-    TransformBuffer* transformData = static_cast<TransformBuffer*>(mappedResource.pData);
-    transformData->viewProjectionMatrix = XMMatrixTranspose(viewProjMatrix);
-    transformData->worldMatrix = XMMatrixTranspose(worldMatrix);
-    
-    XMFLOAT3 cameraPos = camera.GetPosition();
-    transformData->cameraPos = cameraPos;
-    transformData->sphereRadius = config.sphereRadius;
-
-    device->GetContext()->Unmap(transformBuffer.get(), 0);
-}
-
-void Renderer::UpdateLightBuffer() {
-    D3D11_MAPPED_SUBRESOURCE mappedResource;
-    THROW_IF_FAILED(
-        device->GetContext()->Map(lightBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource),
-        "Failed to map light buffer"
-    );
-
-    LightBuffer* lightData = static_cast<LightBuffer*>(mappedResource.pData);
-    lightData->lightDirection = XMFLOAT3(config.lightDirection[0], config.lightDirection[1], config.lightDirection[2]);
-    lightData->lightIntensity = config.lightIntensity;
-    lightData->lightColor = XMFLOAT3(config.lightColor[0], config.lightColor[1], config.lightColor[2]);
-    lightData->ambientIntensity = config.ambientIntensity;
-    lightData->cameraPos = cameraPosition;
-    lightData->specularPower = config.specularPower;
-
-    device->GetContext()->Unmap(lightBuffer.get(), 0);
-}
-
-void Renderer::UpdateLightBufferWithCamera(const InteractiveCamera& camera) {
-    D3D11_MAPPED_SUBRESOURCE mappedResource;
-    THROW_IF_FAILED(
-        device->GetContext()->Map(lightBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource),
-        "Failed to map light buffer"
-    );
-
-    LightBuffer* lightData = static_cast<LightBuffer*>(mappedResource.pData);
-    lightData->lightDirection = XMFLOAT3(config.lightDirection[0], config.lightDirection[1], config.lightDirection[2]);
-    lightData->lightIntensity = config.lightIntensity;
-    lightData->lightColor = XMFLOAT3(config.lightColor[0], config.lightColor[1], config.lightColor[2]);
-    lightData->ambientIntensity = config.ambientIntensity;
-    lightData->cameraPos = camera.GetPosition();
-    lightData->specularPower = config.specularPower;
-
-    device->GetContext()->Unmap(lightBuffer.get(), 0);
-}
-
-void Renderer::UpdateSimulationConstantsBuffer(const ParticleSystem& particleSystem) {
-    D3D11_MAPPED_SUBRESOURCE mappedResource;
-    THROW_IF_FAILED(
-        device->GetContext()->Map(simulationConstantsBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource),
+        context->Map(simulationConstantsBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource),
         "Failed to map simulation constants buffer"
     );
 
-    SimulationConstants* simData = static_cast<SimulationConstants*>(mappedResource.pData);
-    const auto& config = particleSystem.GetConfig();
+    auto constants = static_cast<SimulationConstants*>(mappedResource.pData);
     
-    simData->springConstant = config.springConstant;
-    simData->restLength = config.restLength;
-    simData->timeStep = config.timeStep;
-    simData->damping = config.damping;
-    simData->gravity = XMFLOAT3(config.gravity[0], config.gravity[1], config.gravity[2]);
-    simData->boundaryMin = XMFLOAT3(config.boundaryMin[0], config.boundaryMin[1], config.boundaryMin[2]);
-    simData->boundaryMax = XMFLOAT3(config.boundaryMax[0], config.boundaryMax[1], config.boundaryMax[2]);
+    constants->deltaTime = simConfig.timeStep;
+    constants->globalDamping = 0.999f; // Global damping factor
+    
+    constants->gravity = env.gravity;
+    constants->boundaryRestitution = env.boundaryRestitution;
+    
+    constants->boundaryMin = env.boundaryMin;
+    constants->airDensity = env.airDensity;
+    
+    constants->boundaryMax = env.boundaryMax;
+    constants->fluidViscosity = env.fluidViscosity;
+    
+    constants->windVelocity = env.windVelocity;
+    constants->ambientTemperature = env.ambientTemperature;
+    
+    constants->numParticleTypes = configManager->GetParticleTypeCount();
+    constants->numInteractionRules = configManager->GetInteractionRuleCount();
+    constants->maxInteractionsPerParticle = simConfig.maxInteractionsPerParticle;
+    constants->spatialGridSize = simConfig.spatialGridSize;
+    
+    constants->thermalDiffusion = env.thermalDiffusion;
 
-    device->GetContext()->Unmap(simulationConstantsBuffer.get(), 0);
+    context->Unmap(simulationConstantsBuffer.get(), 0);
 }
 
-void Renderer::UpdateCameraPosition(float time) {
-    cameraAngle = time * config.cameraRotationSpeed;
-    cameraDistance = config.cameraRadius;
-    cameraPosition.x = cameraDistance * sinf(cameraAngle);
-    cameraPosition.y = config.cameraHeight;
-    cameraPosition.z = cameraDistance * cosf(cameraAngle);
-}
-
-XMMATRIX Renderer::CreateViewMatrix() const {
-    XMVECTOR eye = XMLoadFloat3(&cameraPosition);
-    XMVECTOR at = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
-    XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-    return XMMatrixLookAtLH(eye, at, up);
-}
-
-XMMATRIX Renderer::CreateProjectionMatrix() const {
-    float fovY = XMConvertToRadians(config.cameraFov);
-    float aspectRatio = static_cast<float>(config.windowWidth) / static_cast<float>(config.windowHeight);
-    float nearZ = config.cameraNearPlane;
-    float farZ = config.cameraFarPlane;
-    return XMMatrixPerspectiveFovLH(fovY, aspectRatio, nearZ, farZ);
-}
-
-void Renderer::RunComputeShader(const ParticleSystem& particleSystem) {
-    PROFILE_SCOPE("Compute Shader");
+void Renderer::RenderFrameWithCamera(const std::vector<Particle>& particles, 
+                                   const XMMATRIX& viewMatrix, 
+                                   const XMMATRIX& projectionMatrix,
+                                   const XMFLOAT3& cameraPos) {
+    PROFILE_FUNCTION();
     
     auto context = device->GetContext();
+    const auto& renderConfig = configManager->GetRenderConfig();
     
-    // Set compute shader
-    context->CSSetShader(shaderManager->GetComputeShader("compute"), nullptr, 0);
+    // Clear render targets
+    const float clearColor[] = { 
+        renderConfig.clearColor[0], 
+        renderConfig.clearColor[1], 
+        renderConfig.clearColor[2], 
+        renderConfig.clearColor[3] 
+    };
+    context->ClearRenderTargetView(device->GetRenderTargetView(), clearColor);
+    context->ClearDepthStencilView(device->GetDepthStencilView(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+    // Set render states
+    context->RSSetState(rasterizerState.get());
+    context->OMSetDepthStencilState(depthStencilState.get(), 1);
     
-    // Set resources
-    ID3D11ShaderResourceView* srvs[] = { particleSystem.GetCurrentSRV() };
-    ID3D11UnorderedAccessView* uavs[] = { particleSystem.GetNextUAV() };
-    
-    context->CSSetShaderResources(0, 1, srvs);
-    context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-    
-    // Set simulation constants constant buffer
-    if (simulationConstantsBuffer) {
-        ID3D11Buffer* buffers[] = { simulationConstantsBuffer.get() };
-        context->CSSetConstantBuffers(0, 1, buffers);
+    float blendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    context->OMSetBlendState(blendState.get(), blendFactor, 0xffffffff);
+
+    // Apply frustum culling if enabled
+    std::vector<Particle> visibleParticles = particles;
+    if (enableFrustumCulling && frustumCuller) {
+        XMMATRIX viewProjMatrix = XMMatrixMultiply(viewMatrix, projectionMatrix);
+        visibleParticles = frustumCuller->CullParticles(particles, viewProjMatrix, cameraPos);
+        
+        LOG_DEBUG("Culled {} particles, {} remain visible", 
+                 particles.size() - visibleParticles.size(), 
+                 visibleParticles.size());
     }
+
+    if (visibleParticles.empty()) {
+        return;
+    }
+
+    // Update transform buffer
+    UpdateTransformBuffer(viewMatrix, projectionMatrix, cameraPos);
     
-    // Dispatch compute shader
-    UINT numGroups = (static_cast<UINT>(particleSystem.GetParticleCount()) + 63) / 64;
-    context->Dispatch(numGroups, 1, 1);
+    // Update lighting buffer
+    UpdateLightBuffer(cameraPos);
     
-    // Unbind resources
-    ID3D11ShaderResourceView* nullSRV = nullptr;
-    ID3D11UnorderedAccessView* nullUAV = nullptr;
-    context->CSSetShaderResources(0, 1, &nullSRV);
-    context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
-    context->CSSetShader(nullptr, nullptr, 0);
+    // Set shaders
+    if (!shaderManager->SetShaders("VertexShader", "GeometryShaderIcosphere", "PixelShaderPhong")) {
+        LOG_ERROR("Failed to set multi-type rendering shaders");
+        return;
+    }
+
+    // Bind constant buffers
+    context->VSSetConstantBuffers(0, 1, transformBuffer.getAddressOf());
+    context->GSSetConstantBuffers(0, 1, transformBuffer.getAddressOf());
+    context->GSSetConstantBuffers(1, 1, GetCullingBuffer()); // LOD/culling constants
+    context->PSSetConstantBuffers(0, 1, lightBuffer.getAddressOf());
+
+    // Bind particle data and material buffer
+    auto particleBuffer = shaderManager->GetParticleBuffer();
+    auto particleSRV = shaderManager->GetParticleBufferSRV();
+    
+    if (particleBuffer && particleSRV) {
+        context->VSSetShaderResources(0, 1, &particleSRV);
+        context->PSSetShaderResources(0, 1, materialBufferSRV.getAddressOf());
+    }
+
+    // Set input layout and topology
+    context->IASetInputLayout(nullptr); // No input layout needed for structured buffer
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
+
+    // Render particles as points (geometry shader generates icospheres)
+    context->Draw(visibleParticles.size(), 0);
+
+    LOG_DEBUG("Rendered {} particles as icospheres with Phong shading", visibleParticles.size());
+}
+
+void Renderer::UpdateTransformBuffer(const XMMATRIX& viewMatrix, 
+                                   const XMMATRIX& projectionMatrix, 
+                                   const XMFLOAT3& cameraPos) {
+    PROFILE_FUNCTION();
+    
+    auto context = device->GetContext();
+    const auto& cullingConfig = configManager->GetCullingConfig();
+
+    D3D11_MAPPED_SUBRESOURCE mappedResource;
+    THROW_IF_FAILED(
+        context->Map(transformBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource),
+        "Failed to map transform buffer"
+    );
+
+    auto transformData = static_cast<TransformBuffer*>(mappedResource.pData);
+    
+    transformData->viewProjectionMatrix = XMMatrixTranspose(XMMatrixMultiply(viewMatrix, projectionMatrix));
+    transformData->worldMatrix = XMMatrixTranspose(XMMatrixIdentity());
+    transformData->cameraPos = cameraPos;
+    transformData->globalScale = cullingConfig.globalScale;
+
+    context->Unmap(transformBuffer.get(), 0);
+}
+
+void Renderer::UpdateLightBuffer(const XMFLOAT3& cameraPos) {
+    PROFILE_FUNCTION();
+    
+    auto context = device->GetContext();
+    const auto& renderConfig = configManager->GetRenderConfig();
+
+    D3D11_MAPPED_SUBRESOURCE mappedResource;
+    THROW_IF_FAILED(
+        context->Map(lightBuffer.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource),
+        "Failed to map light buffer"
+    );
+
+    auto lightData = static_cast<LightBuffer*>(mappedResource.pData);
+    
+    lightData->lightDirection = { 
+        renderConfig.lightDirection[0], 
+        renderConfig.lightDirection[1], 
+        renderConfig.lightDirection[2] 
+    };
+    lightData->lightIntensity = renderConfig.lightIntensity;
+    lightData->lightColor = { 
+        renderConfig.lightColor[0], 
+        renderConfig.lightColor[1], 
+        renderConfig.lightColor[2] 
+    };
+    lightData->ambientIntensity = renderConfig.ambientIntensity;
+    lightData->cameraPos = cameraPos;
+    lightData->specularPower = renderConfig.specularPower;
+
+    context->Unmap(lightBuffer.get(), 0);
+}
+
+ID3D11Buffer** Renderer::GetCullingBuffer() {
+    // Create culling/LOD buffer if needed
+    if (!cullingBuffer) {
+        CreateCullingBuffer();
+    }
+    return cullingBuffer.getAddressOf();
+}
+
+bool Renderer::CreateCullingBuffer() {
+    auto d3dDevice = device->GetDevice();
+    const auto& icoConfig = configManager->GetIcosphereConfig();
+    
+    // Structure for culling/LOD constants
+    struct CullingConstants {
+        float lodDistance0;
+        float lodDistance1;
+        float lodDistance2;
+        float maxRenderDistance;
+        uint32_t enableLOD;
+        uint32_t enableDistanceCulling;
+        float padding[2];
+    };
+
+    D3D11_BUFFER_DESC bufferDesc = {};
+    bufferDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    bufferDesc.ByteWidth = sizeof(CullingConstants);
+    bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+
+    CullingConstants constants = {};
+    constants.lodDistance0 = icoConfig.lodDistance0;
+    constants.lodDistance1 = icoConfig.lodDistance1;
+    constants.lodDistance2 = icoConfig.lodDistance2;
+    constants.maxRenderDistance = configManager->GetCullingConfig().maxRenderDistance;
+    constants.enableLOD = icoConfig.enableAdaptiveLOD ? 1 : 0;
+    constants.enableDistanceCulling = configManager->GetCullingConfig().enableDistanceCulling ? 1 : 0;
+
+    D3D11_SUBRESOURCE_DATA initData = {};
+    initData.pSysMem = &constants;
+
+    THROW_IF_FAILED(
+        d3dDevice->CreateBuffer(&bufferDesc, &initData, cullingBuffer.getAddressOf()),
+        "Failed to create culling constant buffer"
+    );
+
+    return true;
+}
+
+void Renderer::EnableFrustumCulling(bool enable) {
+    enableFrustumCulling = enable && (frustumCuller != nullptr);
+    LOG_INFO("Frustum culling {}", enableFrustumCulling ? "enabled" : "disabled");
+}
+
+void Renderer::SetCameraPosition(const XMFLOAT3& position) {
+    cameraPosition = position;
+}
+
+XMFLOAT3 Renderer::GetCameraPosition() const {
+    return cameraPosition;
 }

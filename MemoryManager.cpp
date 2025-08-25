@@ -9,7 +9,7 @@ ComPtr<ID3D11Buffer> GPUMemoryManager::GetBuffer(size_t size, D3D11_USAGE usage,
     
     auto now = std::chrono::steady_clock::now();
     
-    // Поиск подходящего буфера в пуле
+    // Search for suitable buffer in pool
     auto it = std::find_if(bufferPool.begin(), bufferPool.end(),
         [size, usage, bindFlags](const auto& pair) {
             const auto& info = pair.second;
@@ -23,7 +23,7 @@ ComPtr<ID3D11Buffer> GPUMemoryManager::GetBuffer(size_t size, D3D11_USAGE usage,
         return buffer;
     }
     
-    // Создаем новый буфер, если не найден подходящий
+    // Create new buffer if suitable one not found
     D3D11_BUFFER_DESC desc = {};
     desc.ByteWidth = static_cast<UINT>(size);
     desc.Usage = usage;
@@ -59,9 +59,9 @@ void GPUMemoryManager::ReturnBuffer(ComPtr<ID3D11Buffer> buffer) {
     
     bufferPool.emplace_back(std::move(buffer), info);
     
-    // Ограничиваем размер пула
+    // Limit pool size
     if (bufferPool.size() > 100) {
-        // Удаляем самые старые буферы
+        // Remove oldest buffers
         std::sort(bufferPool.begin(), bufferPool.end(),
             [](const auto& a, const auto& b) {
                 return a.second.lastUsed < b.second.lastUsed;
@@ -109,7 +109,7 @@ void GPUMemoryManager::PrintMemoryStats() const {
     LOG_INFO("  Buffer count: {}", bufferPool.size());
     LOG_INFO("  Total memory: {} MB", totalMemory / (1024 * 1024));
     
-    // Группировка по размерам
+    // Grouping by sizes
     std::map<size_t, int> sizeGroups;
     for (const auto& pair : bufferPool) {
         size_t sizeCategory = (pair.second.size / 1024) * 1024; // Round to KB

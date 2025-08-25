@@ -8,6 +8,7 @@ ShaderManager::ShaderManager(std::shared_ptr<D3DDevice> device) : device(device)
 bool ShaderManager::LoadAllShaders(const std::filesystem::path& shaderDirectory) {
     try {
         LoadShader("compute", shaderDirectory / "ComputeShader.cso", ShaderType::Compute);
+        LoadShader("FrustumCulling", shaderDirectory / "FrustumCullingShader.cso", ShaderType::Compute);
         LoadShader("vertex", shaderDirectory / "VertexShader.vso", ShaderType::Vertex);
         LoadShader("geometry", shaderDirectory / "GeometryShader.gso", ShaderType::Geometry);
         LoadShader("pixel", shaderDirectory / "PixelShader.pso", ShaderType::Pixel);

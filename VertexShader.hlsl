@@ -1,46 +1,59 @@
+// Vertex Shader for Multi-Type Particle System
+// Prepares particle data for geometry shader icosphere generation
+
 struct Particle
 {
     float3 position;
     float3 oldPosition;
+    float3 velocity;
     float3 acceleration;
-    float padding;
+    
+    uint typeId;
+    float mass;
+    float radius;
+    float charge;
+    
+    float temperature;
+    float age;
+    uint collisionCount;
+    uint flags;
 };
 
-// Input buffer from the compute shader
-StructuredBuffer<Particle> particlesOut : register(t0);
+struct VS_OUTPUT
+{
+    float4 position : POSITION;
+    uint typeId : TEXCOORD0;
+    float radius : TEXCOORD1;
+    float3 worldPos : TEXCOORD2;
+};
 
-// Constant buffer for transformation matrices
+// Particle buffer
+StructuredBuffer<Particle> particles : register(t0);
+
+// Transform constants
 cbuffer TransformBuffer : register(b0)
 {
-    float4x4 viewProjectionMatrix;
-    float4x4 worldMatrix;
+    matrix viewProjectionMatrix;
+    matrix worldMatrix;
     float3 cameraPos;
-    float sphereRadius;
+    float globalScale;
 };
 
-// Output structure for the vertex shader
-struct VSOutput
+VS_OUTPUT VSMain(uint vertexID : SV_VertexID)
 {
-    float4 position : SV_POSITION;
-    float3 worldPos : POSITION;
-    float3 velocity : VELOCITY;
-    uint pointId : POINTID;
-};
-
-// Vertex shader main function
-VSOutput VSMain(uint id : SV_VertexID)
-{
-    VSOutput output;
+    VS_OUTPUT output;
     
-    // Extract the particle data
-    Particle particle = particlesOut[id];
+    // Get particle data
+    Particle particle = particles[vertexID];
     
-    // Transform to world space then to clip space
-    float4 worldPos = mul(float4(particle.position, 1.0f), worldMatrix);
-    output.position = mul(worldPos, viewProjectionMatrix);
-    output.worldPos = worldPos.xyz;
-    output.velocity = particle.position - particle.oldPosition; // Current velocity from Verlet
-    output.pointId = id;
+    // Transform world position
+    float3 worldPos = mul(float4(particle.position, 1.0f), worldMatrix).xyz;
+    
+    // Pass data to geometry shader
+    output.position = float4(worldPos, 1.0f);  // Will be transformed in GS
+    output.typeId = particle.typeId;
+    output.radius = particle.radius;
+    output.worldPos = worldPos;
     
     return output;
 }

@@ -6,7 +6,7 @@
 #include <vector>
 #include <memory>
 
-// Современная система обработки ошибок DirectX
+// Modern DirectX error handling system
 
 enum class ErrorSeverity {
     Info,

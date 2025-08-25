@@ -6,7 +6,7 @@
 #include <mutex>
 #include <type_traits>
 
-// Современная система управления памятью для высокопроизводительных сценариев
+// Modern memory management system for high-performance scenarios
 
 template<typename T>
 class ObjectPool {
@@ -51,7 +51,7 @@ public:
     }
 };
 
-// GPU Memory Manager для оптимизации DirectX буферов
+// GPU Memory Manager for DirectX buffer optimization
 class GPUMemoryManager {
 private:
     struct BufferInfo {
@@ -76,7 +76,7 @@ public:
     void PrintMemoryStats() const;
 };
 
-// RAII wrapper для временных GPU ресурсов
+// RAII wrapper for temporary GPU resources
 template<typename T>
 class ScopedGPUResource {
 private:
@@ -100,7 +100,7 @@ public:
     T** getAddressOf() { return resource.getAddressOf(); }
 };
 
-// Memory profiler для отслеживания использования памяти
+// Memory profiler for tracking memory usage
 class MemoryProfiler {
 public:
     struct MemoryStats {

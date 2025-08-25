@@ -22,6 +22,16 @@ private:
         XMFLOAT3 cloudCenter = {0.0f, 0.0f, 0.0f};
         float zoomPercentile = 1.0f;
         float cameraDistance = 0.0f;
+        
+        // Culling stats
+        bool frustumCullingEnabled = false;
+        int visibleParticles = 0;
+        int culledByFrustum = 0;
+        int culledByDistance = 0;
+        int lodLevel0Count = 0;
+        int lodLevel1Count = 0;
+        int lodLevel2Count = 0;
+        float cullingTimeMs = 0.0f;
     } stats;
 
 public:
@@ -29,7 +39,7 @@ public:
     ~StatsOverlay() = default;
     
     void Update(float deltaTime, float currentFPS, const ParticleSystem& particles, 
-                const InteractiveCamera& camera, float simulationTime);
+                const InteractiveCamera& camera, float simulationTime, const class Renderer* renderer = nullptr);
     
     void Toggle() { visible = !visible; }
     void SetVisible(bool vis) { visible = vis; }
